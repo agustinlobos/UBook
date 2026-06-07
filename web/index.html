@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>UBook | Movilidad universitaria privada</title>
+  <meta
+    name="description"
+    content="UBook es una plataforma privada de movilidad universitaria para conectar estudiantes verificados y organizar turnos de traslado."
+  />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+
+  <!-- HEADER -->
+  <header class="site-header">
+    <div class="site-header__container">
+
+      <a class="brand" href="/" aria-label="UBook inicio">
+        <span class="brand__u">U</span>
+        <span class="brand__book">Book</span>
+      </a>
+
+      <nav class="site-nav" aria-label="Navegación principal">
+        <a class="site-nav__link" href="#problem">Problema</a>
+        <a class="site-nav__link" href="#solution">Solución</a>
+        <a class="site-nav__link" href="#how-it-works">Cómo funciona</a>
+        <a class="site-nav__link" href="#security">Seguridad</a>
+        <a class="site-nav__link" href="#waitlist">Lista de espera</a>
+      </nav>
+
+      <button class="button button--small button--primary" type="button" data-action="open-waitlist">
+        Unirme
+      </button>
+
+    </div>
+  </header>
+
+  <!-- MAIN -->
+  <main>
+
+    <!-- HERO -->
+    <section class="hero" id="home">
+      <div class="hero__container">
+
+        <div class="hero__content">
+          <p class="eyebrow">Solo estudiantes verificados</p>
+
+          <h1 class="hero__title">
+            La red privada de movilidad universitaria
+          </h1>
+
+          <p class="hero__description">
+            Conecta con estudiantes verificados, organiza turnos seguros y reduce tus costos
+            de traslado hacia la universidad.
+          </p>
+
+          <div class="hero__actions">
+            <button class="button button--primary" type="button" data-action="open-waitlist">
+              Unirme a la lista de espera
+            </button>
+
+            <button class="button button--secondary" type="button" data-action="show-how-it-works">
+              Ver cómo funciona
+            </button>
+          </div>
+
+          <div class="hero__stats" aria-label="Indicadores principales">
+            <article class="stat-card">
+              <strong>100%</strong>
+              <span>universitario</span>
+            </article>
+
+            <article class="stat-card">
+              <strong>0%</strong>
+              <span>comisión por viaje</span>
+            </article>
+
+            <article class="stat-card">
+              <strong>24/7</strong>
+              <span>turnos y rutas</span>
+            </article>
+          </div>
+        </div>
+
+        <div class="hero__visual" aria-label="Vista preliminar de la aplicación UBook">
+          <div class="app-preview">
+
+            <div class="app-preview__screen">
+              <div class="app-preview__top">
+                <div class="app-preview__logo">
+                  <span>U</span>Book
+                </div>
+
+                <div class="app-preview__badge">
+                  Verificado
+                </div>
+              </div>
+
+              <div class="app-preview__map">
+                <div class="app-preview__route-line"></div>
+                <div class="app-preview__point app-preview__point--start"></div>
+                <div class="app-preview__point app-preview__point--end"></div>
+
+                <article class="app-preview__location app-preview__location--origin">
+                  <small>Origen</small>
+                  <strong>Chicureo</strong>
+                </article>
+
+                <article class="app-preview__location app-preview__location--destination">
+                  <small>Destino</small>
+                  <strong>UDD</strong>
+                </article>
+              </div>
+
+              <article class="turn-preview">
+                <div class="turn-preview__header">
+                  <div>
+                    <small>Turno disponible</small>
+                    <h3>Chicureo → UDD</h3>
+                  </div>
+
+                  <span>3 cupos</span>
+                </div>
+
+                <div class="turn-preview__details">
+                  <div>
+                    <small>Hora</small>
+                    <strong>07:15</strong>
+                  </div>
+
+                  <div>
+                    <small>Rating</small>
+                    <strong>4.9</strong>
+                  </div>
+
+                  <div>
+                    <small>Aporte</small>
+                    <strong>$3.000</strong>
+                  </div>
+                </div>
+
+                <button class="button button--primary button--full" type="button" data-action="request-turn">
+                  Solicitar turno
+                </button>
+              </article>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- PROBLEM -->
+    <section class="section" id="problem">
+      <div class="section__container">
+
+        <header class="section__header">
+          <p class="eyebrow">El problema</p>
+
+          <h2>
+            Moverse a la universidad no debería ser tan difícil
+          </h2>
+        </header>
+
+        <div class="cards-grid">
+          <article class="info-card">
+            <h3>Grupos desordenados</h3>
+            <p>
+              WhatsApp e Instagram no fueron creados para coordinar turnos de forma segura.
+            </p>
+          </article>
+
+          <article class="info-card">
+            <h3>Poca seguridad</h3>
+            <p>
+              No siempre sabes con quién viajas, si está verificado o si tiene reputación real.
+            </p>
+          </article>
+
+          <article class="info-card">
+            <h3>Altos costos</h3>
+            <p>
+              Combustible, TAG, estacionamiento y viajes diarios terminan pesando todos los meses.
+            </p>
+          </article>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- SOLUTION -->
+    <section class="section section--dark" id="solution">
+      <div class="section__container section__container--split">
+
+        <div class="section__content">
+          <p class="eyebrow">La solución</p>
+
+          <h2>
+            UBook organiza la movilidad universitaria
+          </h2>
+
+          <p>
+            Encuentra turnos compatibles, coordina con estudiantes verificados y prioriza
+            personas de tu misma universidad o rutas cercanas.
+          </p>
+        </div>
+
+        <div class="benefits-grid">
+          <article class="benefit-card">Correos universitarios verificados</article>
+          <article class="benefit-card">Prioridad por universidad</article>
+          <article class="benefit-card">Rutas compatibles</article>
+          <article class="benefit-card">Turnos fijos y recurrentes</article>
+          <article class="benefit-card">Chat interno</article>
+          <article class="benefit-card">Reputación visible</article>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section class="section" id="how-it-works">
+      <div class="section__container">
+
+        <header class="section__header section__header--center">
+          <p class="eyebrow">Cómo funciona</p>
+
+          <h2>
+            Tres pasos simples
+          </h2>
+        </header>
+
+        <div class="cards-grid">
+          <article class="info-card">
+            <h3>1. Verifica tu correo</h3>
+            <p>
+              Solo pueden entrar estudiantes con correo universitario chileno.
+            </p>
+          </article>
+
+          <article class="info-card">
+            <h3>2. Encuentra o crea un turno</h3>
+            <p>
+              Busca estudiantes que viajen desde tu zona hacia tu universidad.
+            </p>
+          </article>
+
+          <article class="info-card">
+            <h3>3. Coordina y viaja seguro</h3>
+            <p>
+              Usa chat interno, revisa perfiles, reputación y cupos disponibles.
+            </p>
+          </article>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- FEATURES -->
+    <section class="section" id="features">
+      <div class="section__container">
+
+        <header class="section__header">
+          <p class="eyebrow">Funciones</p>
+
+          <h2>
+            Todo lo necesario para coordinar turnos
+          </h2>
+        </header>
+
+        <div class="features-grid">
+          <article class="feature-card">Turnos en tiempo real</article>
+          <article class="feature-card">Mapa interactivo</article>
+          <article class="feature-card">Chat interno</article>
+          <article class="feature-card">Perfiles verificados</article>
+          <article class="feature-card">Rating y reputación</article>
+          <article class="feature-card">Favoritos y seguidores</article>
+          <article class="feature-card">Turnos fijos</article>
+          <article class="feature-card">Prioridad por universidad</article>
+          <article class="feature-card">Alertas inteligentes</article>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- SECURITY -->
+    <section class="section section--dark" id="security">
+      <div class="section__container section__container--split">
+
+        <div class="section__content">
+          <p class="eyebrow">Seguridad</p>
+
+          <h2>
+            Diseñada para una comunidad universitaria segura
+          </h2>
+
+          <p>
+            La confianza no es una función más. Es el centro de UBook.
+          </p>
+        </div>
+
+        <ul class="security-list">
+          <li>Acceso solo con correo universitario</li>
+          <li>Perfiles verificados y reputación pública</li>
+          <li>Reportes, bloqueos y control comunitario</li>
+          <li>Chat interno sin exponer teléfono al inicio</li>
+          <li>Badges de confianza y viajes realizados</li>
+        </ul>
+
+      </div>
+    </section>
+
+    <!-- ZONES -->
+    <section class="section" id="zones">
+      <div class="section__container">
+
+        <header class="section__header">
+          <p class="eyebrow">Zonas iniciales</p>
+
+          <h2>
+            Pensada para lugares con alta fricción de movilidad
+          </h2>
+
+          <p>
+            Partimos conectando comunidades donde el transporte público no siempre es suficiente
+            y los traslados diarios son largos, caros o poco eficientes.
+          </p>
+        </header>
+
+        <div class="tags-list" aria-label="Zonas iniciales de UBook">
+          <span>Chicureo</span>
+          <span>Piedra Roja</span>
+          <span>Chamisero</span>
+          <span>Colina</span>
+          <span>Buin</span>
+          <span>Lampa</span>
+          <span>Talagante</span>
+          <span>Pirque</span>
+          <span>Curacaví</span>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- SOCIAL UTILITY -->
+    <section class="social-block" id="social-utility">
+      <div class="social-block__container">
+        <p class="eyebrow">Herramienta social</p>
+
+        <h2>
+          No es una red social. Es movilidad con confianza.
+        </h2>
+
+        <p>
+          UBook incorpora seguidores, favoritos, badges e historial de viajes para aumentar seguridad
+          y recurrencia, pero sin publicaciones, reels, videos ni feed.
+        </p>
+      </div>
+    </section>
+
+    <!-- WAITLIST -->
+    <section class="section waitlist" id="waitlist">
+      <div class="waitlist__container">
+
+        <div class="waitlist__content">
+          <p class="eyebrow">Lista de espera</p>
+
+          <h2>
+            Sé parte de los primeros estudiantes en entrar a UBook
+          </h2>
+
+          <p>
+            Mientras más estudiantes de tu zona se sumen, más turnos disponibles tendrá tu comunidad.
+          </p>
+        </div>
+
+        <form class="waitlist-form" data-form="waitlist">
+          <div class="form-field">
+            <label for="student-name">Nombre</label>
+            <input id="student-name" name="name" type="text" placeholder="Ej: Agustín Lobos" />
+          </div>
+
+          <div class="form-field">
+            <label for="student-university">Universidad</label>
+            <input id="student-university" name="university" type="text" placeholder="Ej: UDD" />
+          </div>
+
+          <div class="form-field">
+            <label for="student-commune">Comuna</label>
+            <input id="student-commune" name="commune" type="text" placeholder="Ej: Chicureo" />
+          </div>
+
+          <div class="form-field">
+            <label for="student-email">Correo universitario</label>
+            <input id="student-email" name="email" type="email" placeholder="nombre@universidad.cl" />
+          </div>
+
+          <button class="button button--primary button--full" type="submit" data-action="submit-waitlist">
+            Quiero entrar a UBook
+          </button>
+        </form>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="site-footer">
+    <div class="site-footer__container">
+
+      <a class="brand" href="/" aria-label="UBook inicio">
+        <span class="brand__u">U</span>
+        <span class="brand__book">Book</span>
+      </a>
+
+      <p>
+        Movilidad universitaria privada, segura y conectada.
+      </p>
+
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
