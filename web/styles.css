@@ -2443,3 +2443,468 @@ body.app-mode > .site-footer {
     font-size: 34px;
   }
 }
+
+@media (max-width: 860px) {
+  html {
+    scroll-padding-top: 76px;
+  }
+
+  body {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  .button {
+    min-height: 50px;
+    padding: 0 18px;
+    border-radius: 14px;
+  }
+
+  .site-header__container {
+    width: min(100% - 28px, var(--max-width));
+  }
+
+  .hero {
+    min-height: auto;
+  }
+
+  .hero__container {
+    min-height: auto;
+  }
+
+  .hero__title {
+    max-width: 11ch;
+  }
+
+  .hero__description {
+    max-width: 34rem;
+  }
+
+  .ubook-app {
+    min-height: 100svh;
+    display: block;
+  }
+
+  .app-sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 80;
+    padding: 14px 14px 10px;
+    gap: 12px;
+    background: rgba(5, 5, 5, 0.94);
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(18px);
+  }
+
+  .app-sidebar .brand {
+    font-size: 24px;
+  }
+
+  .app-sidebar .button {
+    width: 100%;
+    min-height: 42px;
+    margin-top: 0;
+  }
+
+  .app-tabs {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .app-tab {
+    flex: 0 0 auto;
+    min-height: 42px;
+    min-width: max-content;
+    padding: 0 14px;
+    border-radius: 999px;
+    text-align: center;
+    white-space: nowrap;
+    font-size: 14px;
+  }
+
+  .app-main {
+    padding: 18px 14px 32px;
+  }
+
+  .app-topbar {
+    margin-bottom: 20px;
+    gap: 14px;
+  }
+
+  .app-topbar h1 {
+    margin-top: 8px;
+    font-size: 34px;
+    line-height: 1.05;
+  }
+
+  .app-user-pill {
+    max-width: 100%;
+    width: 100%;
+    justify-content: flex-start;
+    border-radius: 14px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .panel-header {
+    margin-bottom: 18px;
+    gap: 14px;
+  }
+
+  .panel-header h2,
+  .rating-panel h2,
+  .turn-detail h2 {
+    font-size: 32px;
+    line-height: 1.05;
+  }
+
+  .panel-header p,
+  .rating-panel p {
+    line-height: 1.55;
+  }
+
+  .turns-toolbar {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .turns-toolbar .button {
+    width: 100%;
+    padding: 0 12px;
+    font-size: 14px;
+  }
+
+  .create-turn-form,
+  .profile-form,
+  .report-form,
+  .turn-filters,
+  .group-form,
+  .private-turn-form {
+    padding: 16px;
+    gap: 12px;
+    border-radius: 18px;
+  }
+
+  .create-turn-form .button,
+  .profile-form .button,
+  .report-form .button,
+  .group-form .button,
+  .private-turn-form .button,
+  .turn-filters .button {
+    width: 100%;
+  }
+
+  .turns-grid {
+    gap: 14px;
+  }
+
+  .app-turn-card {
+    min-height: auto;
+    padding: 16px;
+    border-radius: 18px;
+  }
+
+  .app-turn-card__avatar {
+    width: 52px;
+    height: 52px;
+    margin-bottom: 12px;
+    font-size: 17px;
+  }
+
+  .app-turn-card__top {
+    gap: 10px;
+  }
+
+  .app-turn-card__top h3 {
+    min-height: 0;
+    font-size: 20px;
+  }
+
+  .app-turn-card__top span {
+    max-width: 92px;
+    text-align: center;
+  }
+
+  .app-turn-meta {
+    margin: 14px 0;
+    grid-auto-rows: minmax(58px, auto);
+    gap: 8px;
+  }
+
+  .app-turn-meta div {
+    padding: 10px;
+    border-radius: 12px;
+  }
+
+  .app-turn-card__actions {
+    gap: 8px;
+  }
+
+  .turn-detail {
+    margin-top: 18px;
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .turn-detail__content {
+    gap: 16px;
+  }
+
+  .route-map {
+    min-height: 260px;
+    border-radius: 18px;
+  }
+
+  .turn-detail__stats {
+    gap: 8px;
+  }
+
+  .turn-detail__stats div {
+    padding: 12px;
+    border-radius: 14px;
+  }
+
+  .turn-detail__actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .turn-application {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .turn-application__actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .messages-layout {
+    gap: 14px;
+  }
+
+  .threads-list {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 10px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .threads-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .thread-item {
+    flex: 0 0 min(270px, 78vw);
+  }
+
+  .chat-panel {
+    min-height: min(620px, calc(100svh - 220px));
+    border-radius: 18px;
+  }
+
+  .chat-header {
+    padding: 14px 16px;
+  }
+
+  .chat-messages {
+    max-height: none;
+    min-height: 300px;
+    padding: 14px;
+  }
+
+  .chat-message {
+    max-width: 88%;
+    padding: 12px 13px;
+    border-radius: 16px;
+  }
+
+  .chat-form {
+    padding: 12px;
+    grid-template-columns: 1fr;
+  }
+
+  .chat-form input {
+    min-height: 50px;
+  }
+
+  .rating-panel,
+  .profile-history {
+    padding: 22px 18px;
+    border-radius: 20px;
+  }
+
+  .history-spend-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .history-day {
+    gap: 12px;
+  }
+
+  .history-day__date {
+    width: 100%;
+    align-items: flex-start;
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  .history-event {
+    grid-template-columns: 1fr;
+  }
+
+  .history-event__actions {
+    justify-content: stretch;
+  }
+
+  .history-event__actions .button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .site-header {
+    height: 62px;
+  }
+
+  .site-header__container {
+    width: calc(100% - 22px);
+  }
+
+  .brand {
+    font-size: 22px;
+  }
+
+  .hero__container {
+    width: calc(100% - 28px);
+    padding: 34px 0 48px;
+    gap: 34px;
+  }
+
+  .hero__title {
+    max-width: 10ch;
+    font-size: 40px;
+  }
+
+  .hero__description {
+    font-size: 15px;
+  }
+
+  .eyebrow {
+    padding: 8px 11px;
+    font-size: 12px;
+  }
+
+  .app-preview {
+    width: 100%;
+  }
+
+  .app-preview__screen {
+    height: auto;
+    min-height: 520px;
+  }
+
+  .register-modal {
+    max-height: calc(100svh - 18px);
+    padding: 20px 14px 14px;
+    border-radius: 18px;
+  }
+
+  .register-modal__content h2 {
+    font-size: 28px;
+  }
+
+  .register-modal__content p:not(.eyebrow) {
+    font-size: 14px;
+  }
+
+  .register-modal__form {
+    padding: 14px;
+    border-radius: 16px;
+  }
+
+  .auth-switch {
+    padding: 4px;
+  }
+
+  .auth-switch__button {
+    min-height: 42px;
+    font-size: 13px;
+  }
+
+  .app-main {
+    padding-inline: 12px;
+  }
+
+  .app-topbar h1 {
+    font-size: 30px;
+  }
+
+  .turns-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .app-turn-meta,
+  .turn-detail__stats {
+    grid-template-columns: 1fr;
+  }
+
+  .turn-application__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-photo-field {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .profile-avatar {
+    width: 78px;
+    height: 78px;
+    font-size: 24px;
+  }
+
+  .chat-panel {
+    min-height: calc(100svh - 205px);
+  }
+
+  .chat-message {
+    max-width: 94%;
+  }
+}
+
+@media (min-width: 861px) and (max-width: 1180px) {
+  .ubook-app {
+    grid-template-columns: 220px 1fr;
+  }
+
+  .app-sidebar {
+    padding: 22px;
+  }
+
+  .app-main {
+    padding: 28px 22px;
+  }
+
+  .turns-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
