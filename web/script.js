@@ -985,19 +985,23 @@ function setAuthLoading(isLoading) {
 
 async function bootstrapAuthenticatedApp() {
   try {
-    const authData = await restoreAuthUser();
-    appState.user = authData;
+    if (appState.session?.user) {
+      appState.user = appState.session.user;
+    } else {
+      const authData = await restoreAuthUser();
+      appState.user = authData;
+    }
+
+    await ensureFreshSession();
+    if (!appState.user && appState.session?.user) {
+      appState.user = appState.session.user;
+    }
   } catch (error) {
     console.warn("Stored session could not be restored", error);
     stopRealtimeSubscriptions();
     clearSession();
     hideApp();
-
-    if (error.status === 401 || error.status === 403) {
-      showToast("Tu sesión expiró. Inicia sesión nuevamente.", "error");
-    } else {
-      showToast("No se pudo validar tu sesión. Intenta nuevamente.", "error");
-    }
+    openAuthModal("login");
 
     return false;
   }
