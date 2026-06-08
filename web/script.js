@@ -242,16 +242,16 @@ function isValidVehiclePlate(value) {
 
 function getStoredSession() {
   try {
-    const session = sessionStorage.getItem(SESSION_KEY);
+    const session = sessionStorage.getItem(SESSION_KEY) || localStorage.getItem(SESSION_KEY);
 
     if (session) {
-      localStorage.removeItem(SESSION_KEY);
       return JSON.parse(session);
     }
 
-    localStorage.removeItem(SESSION_KEY);
     return null;
   } catch {
+    localStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(SESSION_KEY);
     return null;
   }
 }
@@ -261,7 +261,7 @@ function saveSession(session) {
     ...appState.session,
     ...session
   };
-  localStorage.removeItem(SESSION_KEY);
+  localStorage.setItem(SESSION_KEY, JSON.stringify(appState.session));
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(appState.session));
 }
 
@@ -972,10 +972,17 @@ async function bootstrapAuthenticatedApp() {
     const authData = await authGetUser();
     appState.user = authData;
   } catch (error) {
+    console.warn("Stored session could not be restored", error);
     stopRealtimeSubscriptions();
     clearSession();
     hideApp();
-    showToast("Tu sesión expiró. Inicia sesión nuevamente.", "error");
+
+    if (error.status === 401 || error.status === 403) {
+      showToast("Tu sesión expiró. Inicia sesión nuevamente.", "error");
+    } else {
+      showToast("No se pudo validar tu sesión. Intenta nuevamente.", "error");
+    }
+
     return false;
   }
 
