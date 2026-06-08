@@ -19,7 +19,7 @@
   <header class="site-header">
     <div class="site-header__container">
 
-      <a class="brand" href="/" aria-label="UBook inicio">
+      <a class="brand" href="#home" aria-label="UBook inicio">
         <span class="brand__u">U</span>
         <span class="brand__book">Book</span>
       </a>
@@ -29,11 +29,10 @@
         <a class="site-nav__link" href="#solution">Solución</a>
         <a class="site-nav__link" href="#how-it-works">Cómo funciona</a>
         <a class="site-nav__link" href="#security">Seguridad</a>
-        <a class="site-nav__link" href="#waitlist">Lista de espera</a>
       </nav>
 
-      <button class="button button--small button--primary" type="button" data-action="open-waitlist">
-        Unirme
+      <button class="button button--small button--primary" type="button" data-action="open-register">
+        Entrar
       </button>
 
     </div>
@@ -59,8 +58,8 @@
           </p>
 
           <div class="hero__actions">
-            <button class="button button--primary" type="button" data-action="open-waitlist">
-              Unirme a la lista de espera
+            <button class="button button--primary" type="button" data-action="open-register">
+              Entrar a UBook
             </button>
 
             <button class="button button--secondary" type="button" data-action="show-how-it-works">
@@ -362,58 +361,13 @@
       </div>
     </section>
 
-    <!-- WAITLIST -->
-    <section class="section waitlist" id="waitlist">
-      <div class="waitlist__container">
-
-        <div class="waitlist__content">
-          <p class="eyebrow">Lista de espera</p>
-
-          <h2>
-            Sé parte de los primeros estudiantes en entrar a UBook
-          </h2>
-
-          <p>
-            Mientras más estudiantes de tu zona se sumen, más turnos disponibles tendrá tu comunidad.
-          </p>
-        </div>
-
-        <form class="waitlist-form" data-form="waitlist">
-          <div class="form-field">
-            <label for="student-name">Nombre</label>
-            <input id="student-name" name="name" type="text" placeholder="Ej: Agustín Lobos" />
-          </div>
-
-          <div class="form-field">
-            <label for="student-university">Universidad</label>
-            <input id="student-university" name="university" type="text" placeholder="Ej: UDD" />
-          </div>
-
-          <div class="form-field">
-            <label for="student-commune">Comuna</label>
-            <input id="student-commune" name="commune" type="text" placeholder="Ej: Chicureo" />
-          </div>
-
-          <div class="form-field">
-            <label for="student-email">Correo universitario</label>
-            <input id="student-email" name="email" type="email" placeholder="nombre@universidad.cl" />
-          </div>
-
-          <button class="button button--primary button--full" type="submit" data-action="submit-waitlist">
-            Quiero entrar a UBook
-          </button>
-        </form>
-
-      </div>
-    </section>
-
   </main>
 
   <!-- FOOTER -->
   <footer class="site-footer">
     <div class="site-footer__container">
 
-      <a class="brand" href="/" aria-label="UBook inicio">
+      <a class="brand" href="#home" aria-label="UBook inicio">
         <span class="brand__u">U</span>
         <span class="brand__book">Book</span>
       </a>
@@ -424,6 +378,518 @@
 
     </div>
   </footer>
+
+  <!-- REGISTER MODAL -->
+  <div class="modal" data-modal="register" aria-hidden="true">
+    <div class="modal__overlay" data-action="close-register"></div>
+
+    <section
+      class="register-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="register-modal-title"
+    >
+      <button
+        class="register-modal__close"
+        type="button"
+        data-action="close-register"
+        aria-label="Cerrar registro"
+      >
+        ×
+      </button>
+
+      <div class="register-modal__content">
+        <p class="eyebrow">Registro UBook</p>
+
+        <h2 id="register-modal-title">
+          Crea tu acceso universitario
+        </h2>
+
+        <p>
+          Regístrate con tu correo universitario para quedar en la lista de acceso temprano.
+        </p>
+
+        <ul class="register-modal__checks">
+          <li>Validación con correo institucional</li>
+          <li>Prioridad por universidad y comuna</li>
+          <li>Aviso cuando se active tu zona</li>
+        </ul>
+      </div>
+
+      <form class="waitlist-form register-modal__form" data-form="waitlist" autocomplete="off">
+        <div class="form-field">
+          <label for="modal-student-name">Nombre</label>
+          <input id="modal-student-name" name="name" type="text" placeholder="Ej: Agustín Lobos" autocomplete="off" maxlength="120" required />
+        </div>
+
+        <div class="form-field">
+          <label for="modal-student-university">Universidad</label>
+          <input id="modal-student-university" name="university" type="text" placeholder="Ej: UDD" autocomplete="off" maxlength="120" required />
+        </div>
+
+        <div class="form-field">
+          <label for="modal-student-commune">Comuna</label>
+          <input id="modal-student-commune" name="commune" type="text" placeholder="Ej: Chicureo" autocomplete="off" maxlength="120" required />
+        </div>
+
+        <div class="form-field">
+          <label for="modal-student-email">Correo universitario</label>
+          <input id="modal-student-email" name="email" type="email" placeholder="nombre@universidad.cl" autocomplete="off" maxlength="160" required />
+        </div>
+
+        <button class="button button--primary button--full" type="submit" data-action="submit-waitlist">
+          Crear registro
+        </button>
+      </form>
+    </section>
+  </div>
+
+  <!-- AUTH MODAL -->
+  <div class="modal" data-modal="auth" aria-hidden="true">
+    <div class="modal__overlay" data-action="close-auth"></div>
+
+    <section
+      class="register-modal auth-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="auth-modal-title"
+    >
+      <button
+        class="register-modal__close"
+        type="button"
+        data-action="close-auth"
+        aria-label="Cerrar acceso"
+      >
+        ×
+      </button>
+
+      <div class="register-modal__content">
+        <p class="eyebrow">Acceso UBook</p>
+
+        <h2 id="auth-modal-title">
+          Entra con tu correo universitario
+        </h2>
+
+        <p>
+          Crea tu cuenta o inicia sesión para ver turnos, conversar con estudiantes y revisar tu calificación.
+        </p>
+
+        <ul class="register-modal__checks">
+          <li>Correos únicos por usuario</li>
+          <li>Perfil universitario persistente</li>
+          <li>Mensajes protegidos por sesión</li>
+        </ul>
+      </div>
+
+      <form class="waitlist-form register-modal__form" data-form="auth" autocomplete="off">
+        <div class="auth-switch" role="tablist" aria-label="Modo de acceso">
+          <button class="auth-switch__button is-active" type="button" data-auth-mode="login">
+            Iniciar sesión
+          </button>
+          <button class="auth-switch__button" type="button" data-auth-mode="signup">
+            Crear cuenta
+          </button>
+        </div>
+
+        <div class="form-field auth-signup-field" hidden>
+          <label for="auth-name">Nombre</label>
+          <input id="auth-name" name="name" type="text" placeholder="Ej: Agustín Lobos" autocomplete="off" maxlength="120" />
+        </div>
+
+        <div class="form-field auth-signup-field" hidden>
+          <label for="auth-university">Universidad</label>
+          <input id="auth-university" name="university" type="text" placeholder="Ej: UDD" autocomplete="off" maxlength="120" />
+        </div>
+
+        <div class="form-field auth-signup-field" hidden>
+          <label for="auth-commune">Comuna</label>
+          <input id="auth-commune" name="commune" type="text" placeholder="Ej: Chicureo" autocomplete="off" maxlength="120" />
+        </div>
+
+        <div class="form-field">
+          <label for="auth-email">Correo universitario</label>
+          <input id="auth-email" name="ubook_access_email" type="email" placeholder="nombre@universidad.cl" autocomplete="off" autocapitalize="none" spellcheck="false" readonly data-lpignore="true" data-1p-ignore maxlength="160" required />
+        </div>
+
+        <div class="form-field">
+          <label for="auth-password">Contraseña</label>
+          <input id="auth-password" class="password-mask" name="ubook_access_code" type="text" placeholder="Mínimo 6 caracteres" autocomplete="off" autocapitalize="none" spellcheck="false" readonly data-lpignore="true" data-1p-ignore minlength="6" required />
+        </div>
+
+        <button class="button button--primary button--full" type="submit">
+          Iniciar sesión
+        </button>
+      </form>
+    </section>
+  </div>
+
+  <div class="auth-loading" data-auth-loading hidden aria-live="polite" aria-label="Cargando UBook">
+    <div class="auth-loading__brand" aria-hidden="true">UBook</div>
+  </div>
+
+  <!-- AUTHENTICATED APP -->
+  <section class="ubook-app" data-app hidden>
+    <aside class="app-sidebar">
+      <a class="brand" href="#home" aria-label="UBook app">
+        <span class="brand__u">U</span>
+        <span class="brand__book">Book</span>
+      </a>
+
+      <nav class="app-tabs" aria-label="Aplicación UBook">
+        <button class="app-tab is-active" type="button" data-app-tab="turns">Turnos</button>
+        <button class="app-tab" type="button" data-app-tab="ulife"><span class="ulife-tab__u">U</span>Life</button>
+        <button class="app-tab" type="button" data-app-tab="messages">Mensajes</button>
+        <button class="app-tab" type="button" data-app-tab="reports">Denuncias</button>
+        <button class="app-tab" type="button" data-app-tab="rating">Calificación</button>
+        <button class="app-tab" type="button" data-app-tab="profile">Perfil</button>
+      </nav>
+
+      <button class="button button--secondary button--full" type="button" data-action="logout">
+        Cerrar sesión
+      </button>
+    </aside>
+
+    <div class="app-main">
+      <header class="app-topbar">
+        <div>
+          <p class="eyebrow">Panel universitario</p>
+          <h1 data-profile-greeting>Hola</h1>
+        </div>
+        <div class="app-user-pill">
+          <img data-profile-avatar-small alt="" />
+          <span data-profile-email></span>
+        </div>
+      </header>
+
+      <section class="app-panel is-active" data-panel="turns">
+        <div class="panel-header">
+          <div>
+            <h2>Turnos universitarios</h2>
+            <p>Explora turnos activos o publica uno propio para que otros estudiantes te contacten.</p>
+          </div>
+          <div class="turns-toolbar">
+            <button class="button button--secondary" type="button" data-turn-filters-toggle aria-expanded="false" aria-controls="turn-filters">
+              Filtros
+            </button>
+            <button class="button button--secondary" type="button" data-turn-toggle aria-expanded="false" aria-controls="turn-form">
+              Crear un turno
+            </button>
+          </div>
+        </div>
+
+        <section class="turn-filters" id="turn-filters" data-turn-filters hidden>
+          <div class="form-field">
+            <label for="turn-filter-sector">Sector</label>
+            <select id="turn-filter-sector" name="sector">
+              <option value="">Todos</option>
+              <option value="chicureo">Chicureo</option>
+              <option value="colina">Colina</option>
+              <option value="buin">Buin</option>
+              <option value="paine">Paine</option>
+              <option value="san bernardo">San Bernardo</option>
+              <option value="lo barnechea">Lo Barnechea</option>
+              <option value="vitacura">Vitacura</option>
+              <option value="las condes">Las Condes</option>
+              <option value="providencia">Providencia</option>
+              <option value="nunoa">Ñuñoa</option>
+              <option value="la florida">La Florida</option>
+              <option value="puente alto">Puente Alto</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="turn-filter-day">Día</label>
+            <input id="turn-filter-day" name="day" type="date" />
+          </div>
+          <div class="form-field">
+            <label for="turn-filter-sort">Orden</label>
+            <select id="turn-filter-sort" name="sort">
+              <option value="default">Relevancia</option>
+              <option value="value_asc">Valor: menor a mayor</option>
+              <option value="value_desc">Valor: mayor a menor</option>
+              <option value="date_asc">Fecha: más próxima</option>
+              <option value="date_desc">Fecha: más lejana</option>
+            </select>
+          </div>
+          <button class="button button--secondary" type="button" data-turn-filters-reset>Limpiar filtros</button>
+        </section>
+
+        <form class="create-turn-form" id="turn-form" data-form="turn" autocomplete="off" hidden>
+          <div class="form-field">
+            <label for="turn-origin">Origen</label>
+            <input id="turn-origin" name="origin" type="text" placeholder="Ej: Chicureo" autocomplete="off" maxlength="120" required />
+          </div>
+          <div class="form-field">
+            <label for="turn-destination">Destino</label>
+            <input id="turn-destination" name="destination" type="text" placeholder="Ej: UDD" autocomplete="off" maxlength="120" required />
+          </div>
+          <div class="form-field">
+            <label for="turn-vehicle-plate">Patente vehículo</label>
+            <input id="turn-vehicle-plate" name="vehicle_plate" type="text" placeholder="Ej: ABCD12" maxlength="10" autocomplete="off" required />
+          </div>
+          <div class="form-field">
+            <label for="turn-time">Hora de salida</label>
+            <input id="turn-time" name="time" type="text" placeholder="Ej: 07:30" inputmode="numeric" pattern="^([01]?[0-9]|2[0-3]):[0-5][0-9]$" maxlength="5" autocomplete="off" required />
+          </div>
+          <div class="form-field">
+            <label for="turn-date">Fecha</label>
+            <input id="turn-date" name="date" type="date" min="2026-06-08" required />
+          </div>
+          <div class="form-field">
+            <label for="turn-seats">Cupos</label>
+            <input id="turn-seats" name="seats" type="number" min="1" max="8" value="3" required />
+          </div>
+          <div class="form-field">
+            <label for="turn-contribution">Aporte CLP</label>
+            <input id="turn-contribution" name="contribution" type="number" min="0" max="100000" value="3000" required />
+          </div>
+          <button class="button button--primary" type="submit">Publicar turno</button>
+        </form>
+
+        <div class="turns-grid" data-turns-list></div>
+
+        <article class="turn-detail" data-turn-detail hidden></article>
+      </section>
+
+      <section class="app-panel" data-panel="ulife">
+        <div class="panel-header">
+          <div>
+            <h2><span class="ulife-heading__u">U</span>Life</h2>
+            <p>Vida universitaria, eventos sociales, promociones e información útil para tu día a día en la U.</p>
+          </div>
+        </div>
+
+        <div class="ulife-grid">
+          <article class="ulife-card ulife-card--accent">
+            <p class="ulife-card__eyebrow">Eventos sociales</p>
+            <h3>Planes para esta semana</h3>
+            <ul>
+              <li>Taller de bienvenida para estudiantes nuevos.</li>
+              <li>After universitario con cupos limitados.</li>
+              <li>Encuentro por facultades y redes de transporte.</li>
+            </ul>
+          </article>
+
+          <article class="ulife-card">
+            <p class="ulife-card__eyebrow">Promociones</p>
+            <h3>Beneficios para estudiantes</h3>
+            <ul>
+              <li>Descuentos en comida cerca de campus.</li>
+              <li>Promos de librerías, impresión y fotocopias.</li>
+              <li>Acceso a convenios y servicios de movilidad.</li>
+            </ul>
+          </article>
+
+          <article class="ulife-card">
+            <p class="ulife-card__eyebrow">Información U</p>
+            <h3>Lo esencial de tu universidad</h3>
+            <ul>
+              <li>Fechas de matrícula, becas y renovación.</li>
+              <li>Calendario académico y semanas clave.</li>
+              <li>Noticias, trámites y contactos de apoyo.</li>
+            </ul>
+          </article>
+
+          <article class="ulife-card ulife-card--accent">
+            <p class="ulife-card__eyebrow">Docentes</p>
+            <h3>Relacionarte con tu equipo académico</h3>
+            <ul>
+              <li>Horarios de atención y canales de contacto.</li>
+              <li>Recordatorios de evaluaciones y entregas.</li>
+              <li>Información sobre ayudantías y tutorías.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="app-panel" data-panel="messages">
+        <div class="panel-header">
+          <div>
+            <h2>Mensajes</h2>
+            <p>Conversa con estudiantes vinculados a tus turnos, crea grupos y publica turnos privados para miembros del grupo.</p>
+          </div>
+        </div>
+
+        <section class="group-tools">
+          <div class="group-tools__header">
+            <button class="button button--secondary" type="button" data-group-toggle aria-expanded="false" aria-controls="group-form">
+              Crear Grupo
+            </button>
+            <button class="button button--secondary" type="button" data-private-turn-toggle aria-expanded="false" aria-controls="private-turn-form" hidden>
+              Crear un turno privado
+            </button>
+          </div>
+
+          <form class="group-form" id="group-form" data-form="group" autocomplete="off" hidden>
+            <div class="form-field">
+              <label for="group-name">Nombre del grupo</label>
+              <input id="group-name" name="name" type="text" placeholder="Ej: Turnos Chicureo UDD" autocomplete="off" maxlength="80" required />
+            </div>
+            <div class="form-field">
+              <label for="group-emails">Correos miembros</label>
+              <input id="group-emails" name="emails" type="text" placeholder="correo1@universidad.cl, correo2@universidad.cl" autocomplete="off" />
+            </div>
+            <button class="button button--primary" type="submit">Crear grupo</button>
+          </form>
+
+          <form class="private-turn-form" id="private-turn-form" data-form="private-turn" autocomplete="off" hidden>
+            <div class="form-field">
+              <label for="private-turn-group">Grupo</label>
+              <select id="private-turn-group" name="group" required>
+                <option value="">Selecciona un grupo</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label for="private-turn-origin">Origen</label>
+              <input id="private-turn-origin" name="origin" type="text" placeholder="Ej: Chicureo" autocomplete="off" maxlength="120" required />
+            </div>
+            <div class="form-field">
+              <label for="private-turn-destination">Destino</label>
+              <input id="private-turn-destination" name="destination" type="text" placeholder="Ej: UDD" autocomplete="off" maxlength="120" required />
+            </div>
+            <div class="form-field">
+              <label for="private-turn-vehicle-plate">Patente vehículo</label>
+              <input id="private-turn-vehicle-plate" name="vehicle_plate" type="text" placeholder="Ej: ABCD12" maxlength="10" autocomplete="off" required />
+            </div>
+            <div class="form-field">
+              <label for="private-turn-time">Hora de salida</label>
+              <input id="private-turn-time" name="time" type="text" placeholder="Ej: 07:30" inputmode="numeric" pattern="^([01]?[0-9]|2[0-3]):[0-5][0-9]$" maxlength="5" autocomplete="off" required />
+            </div>
+            <div class="form-field">
+              <label for="private-turn-date">Fecha</label>
+              <input id="private-turn-date" name="date" type="date" min="2026-06-08" required />
+            </div>
+            <div class="form-field">
+              <label for="private-turn-seats">Cupos</label>
+              <input id="private-turn-seats" name="seats" type="number" min="1" max="8" value="3" required />
+            </div>
+            <div class="form-field">
+              <label for="private-turn-contribution">Aporte CLP</label>
+              <input id="private-turn-contribution" name="contribution" type="number" min="0" max="100000" value="3000" required />
+            </div>
+            <button class="button button--primary" type="submit">Publicar privado</button>
+          </form>
+
+        </section>
+
+        <div class="messages-layout">
+          <aside class="threads-list" data-threads-list></aside>
+          <div class="chat-panel">
+            <div class="chat-header" data-chat-header>Selecciona un turno con usuario real para conversar.</div>
+            <div class="chat-messages" data-chat-messages></div>
+            <form class="chat-form" data-form="message" autocomplete="off">
+              <input name="message" type="text" placeholder="Escribe un mensaje" maxlength="1000" autocomplete="off" required />
+              <button class="button button--primary" type="submit">Enviar</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section class="app-panel" data-panel="reports">
+        <div class="panel-header">
+          <div>
+            <h2>Denuncias</h2>
+            <p>Reporta desde tu historial. La denuncia no se publica y solo el sistema conserva la información confidencial.</p>
+          </div>
+        </div>
+
+        <form class="report-form" data-form="report" autocomplete="off">
+          <div class="form-field">
+            <label for="report-turn">Turno relacionado</label>
+            <select id="report-turn" name="turn" required>
+              <option value="">Selecciona un turno de tu historial</option>
+            </select>
+          </div>
+
+          <div class="form-field">
+            <label for="report-reason">Motivo</label>
+            <select id="report-reason" name="reason" required>
+              <option value="seguridad">Seguridad</option>
+              <option value="conducta">Conducta inapropiada</option>
+              <option value="turno_falso">Turno falso</option>
+              <option value="acoso">Acoso</option>
+              <option value="otro">Otro</option>
+            </select>
+          </div>
+
+          <div class="form-field form-field--full">
+            <label for="report-details">Detalle</label>
+            <textarea id="report-details" name="details" placeholder="Describe qué ocurrió con la mayor claridad posible." autocomplete="off" maxlength="1500" required></textarea>
+          </div>
+
+          <button class="button button--primary" type="submit">Enviar denuncia</button>
+        </form>
+
+        <div class="reports-list" data-reports-list></div>
+      </section>
+
+      <section class="app-panel" data-panel="rating">
+        <div class="rating-panel">
+          <p class="eyebrow">Tu calificación</p>
+          <h2><span data-rating-value>0.0</span> / 5</h2>
+          <div class="stars-display" data-rating-stars aria-label="Estrellas"></div>
+          <p data-rating-count>Sin calificaciones todavía.</p>
+          <div class="rating-tips">
+            <h3>Consejos para subir tu puntuación</h3>
+            <ul>
+              <li>Llega a la hora acordada y avisa con anticipación si hay cambios.</li>
+              <li>Mantén el vehículo limpio, seguro y con la patente visible.</li>
+              <li>Confirma origen, destino y aporte antes de iniciar el turno.</li>
+              <li>Conduce con calma y respeta las preferencias básicas de los pasajeros.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="app-panel" data-panel="profile">
+        <div class="panel-header">
+          <div>
+            <h2>Mi perfil</h2>
+            <p>Esta información queda guardada en tu usuario y se usa para tus turnos.</p>
+          </div>
+        </div>
+
+        <form class="profile-form" data-form="profile" autocomplete="off">
+          <div class="profile-photo-field">
+            <div class="profile-avatar" data-profile-avatar>UL</div>
+            <div>
+              <label class="button button--secondary" for="profile-photo">Subir foto</label>
+              <input id="profile-photo" name="photo" type="file" accept="image/png,image/jpeg,image/webp" />
+            </div>
+          </div>
+
+          <div class="form-field">
+            <label for="profile-name">Nombre</label>
+            <input id="profile-name" name="name" type="text" autocomplete="off" maxlength="120" required />
+          </div>
+          <div class="form-field">
+            <label for="profile-university">Universidad</label>
+            <input id="profile-university" name="university" type="text" autocomplete="off" maxlength="120" required />
+          </div>
+          <div class="form-field">
+            <label for="profile-commune">Comuna</label>
+            <input id="profile-commune" name="commune" type="text" autocomplete="off" maxlength="120" required />
+          </div>
+          <div class="form-field">
+            <label for="profile-email">Correo</label>
+            <input id="profile-email" name="email" type="email" autocomplete="off" disabled />
+          </div>
+          <button class="button button--primary" type="submit">Guardar perfil</button>
+        </form>
+
+        <section class="profile-history">
+          <div class="panel-header">
+            <div>
+              <h3>Historial de turnos</h3>
+              <p>Calendario ordenado con los turnos que has publicado o registrado como viajes realizados.</p>
+            </div>
+          </div>
+
+          <div class="history-spend-summary" data-history-spend></div>
+          <div class="history-calendar" data-history-calendar></div>
+        </section>
+      </section>
+    </div>
+  </section>
 
   <script src="script.js"></script>
 </body>
