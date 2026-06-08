@@ -305,9 +305,12 @@ async function refreshSession() {
     method: "POST",
     headers: {
       apikey: SUPABASE_KEY,
-      "Content-Type": "application/json"
+      "Content-Type": "application/x-www-form-urlencoded"
     },
-    body: JSON.stringify({ refresh_token: refreshToken })
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken
+    })
   });
   const text = await response.text();
   const payload = parseSupabasePayload(text);
@@ -635,6 +638,19 @@ async function authGetUser() {
   return supabaseFetch("/auth/v1/user", {
     method: "GET"
   });
+}
+
+async function restoreAuthUser() {
+  try {
+    return await authGetUser();
+  } catch (error) {
+    if ((error.status === 401 || error.status === 403) && appState.session?.refresh_token) {
+      await refreshSession();
+      return authGetUser();
+    }
+
+    throw error;
+  }
 }
 
 async function authLogout() {
@@ -969,7 +985,7 @@ function setAuthLoading(isLoading) {
 
 async function bootstrapAuthenticatedApp() {
   try {
-    const authData = await authGetUser();
+    const authData = await restoreAuthUser();
     appState.user = authData;
   } catch (error) {
     console.warn("Stored session could not be restored", error);
