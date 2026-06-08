@@ -257,9 +257,12 @@ function getStoredSession() {
 }
 
 function saveSession(session) {
-  appState.session = session;
+  appState.session = {
+    ...appState.session,
+    ...session
+  };
   localStorage.removeItem(SESSION_KEY);
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify(appState.session));
 }
 
 function clearSession() {
@@ -270,26 +273,111 @@ function clearSession() {
   sessionStorage.removeItem(SESSION_KEY);
 }
 
+function getTokenPayload(token) {
+  try {
+    const [, payload] = token.split(".");
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(normalized.length + ((4 - normalized.length % 4) % 4), "=");
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+}
+
+function isAccessTokenExpiring(token) {
+  const payload = getTokenPayload(token);
+
+  if (!payload?.exp) {
+    return false;
+  }
+
+  return payload.exp * 1000 <= Date.now() + 60000;
+}
+
+async function refreshSession() {
+  const refreshToken = appState.session?.refresh_token;
+
+  if (!refreshToken) {
+    throw new Error("No hay una sesión activa para renovar.");
+  }
+
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ refresh_token: refreshToken })
+  });
+  const text = await response.text();
+  const payload = parseSupabasePayload(text);
+
+  if (!response.ok) {
+    const message = payload?.msg || payload?.message || payload?.error_description || "No se pudo renovar la sesión.";
+    const error = new Error(message);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+
+  saveSession(payload);
+  return appState.session;
+}
+
+async function ensureFreshSession() {
+  if (!appState.session?.access_token || !isAccessTokenExpiring(appState.session.access_token)) {
+    return;
+  }
+
+  await refreshSession();
+}
+
+function parseSupabasePayload(text) {
+  if (!text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
 async function supabaseFetch(path, options = {}) {
+  const { retryAuth, ...fetchOptions } = options;
+
+  if (fetchOptions.auth !== false) {
+    await ensureFreshSession();
+  }
+
   const headers = {
     apikey: SUPABASE_KEY,
     "Content-Type": "application/json",
-    ...(options.headers || {})
+    ...(fetchOptions.headers || {})
   };
 
-  if (options.auth !== false && appState.session?.access_token) {
+  if (fetchOptions.auth !== false && appState.session?.access_token) {
     headers.Authorization = `Bearer ${appState.session.access_token}`;
   }
 
   const response = await fetch(`${SUPABASE_URL}${path}`, {
-    ...options,
+    ...fetchOptions,
     headers
   });
 
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
+  const payload = parseSupabasePayload(text);
 
   if (!response.ok) {
+    if (response.status === 401 && fetchOptions.auth !== false && !retryAuth && appState.session?.refresh_token) {
+      await refreshSession();
+      return supabaseFetch(path, {
+        ...fetchOptions,
+        retryAuth: true
+      });
+    }
+
     const message = payload?.msg || payload?.message || payload?.error_description || "No se pudo completar la solicitud.";
     const error = new Error(message);
     error.status = response.status;
@@ -883,6 +971,15 @@ async function bootstrapAuthenticatedApp() {
   try {
     const authData = await authGetUser();
     appState.user = authData;
+  } catch (error) {
+    stopRealtimeSubscriptions();
+    clearSession();
+    hideApp();
+    showToast("Tu sesión expiró. Inicia sesión nuevamente.", "error");
+    return false;
+  }
+
+  try {
     await ensureProfile();
     await loadAppData();
     showApp();
@@ -895,10 +992,9 @@ async function bootstrapAuthenticatedApp() {
     }, 0);
     return true;
   } catch (error) {
+    console.error("Authenticated app bootstrap failed", error);
     stopRealtimeSubscriptions();
-    clearSession();
-    hideApp();
-    showToast("Tu sesión expiró. Inicia sesión nuevamente.", "error");
+    showToast("No se pudieron cargar tus datos. Recarga la página e intenta nuevamente.", "error");
     return false;
   }
 }
@@ -1148,7 +1244,12 @@ async function updateRows(table, filters, row) {
 
 function showApp() {
   document.body.classList.add("app-mode");
-  document.querySelector("[data-app]").hidden = false;
+  const app = document.querySelector("[data-app]");
+
+  if (app) {
+    app.hidden = false;
+  }
+
   setDefaultTurnDate();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -1163,15 +1264,23 @@ function hideApp() {
 }
 
 function renderApp() {
-  renderProfile();
-  renderTurns();
-  renderThreads();
-  renderMessages();
-  renderRating();
-  renderReports();
-  renderHistoryCalendar();
-  renderGroups();
-  renderPrivateTurnGroupOptions();
+  [
+    ["profile", renderProfile],
+    ["turns", renderTurns],
+    ["threads", renderThreads],
+    ["messages", renderMessages],
+    ["rating", renderRating],
+    ["reports", renderReports],
+    ["history", renderHistoryCalendar],
+    ["groups", renderGroups],
+    ["private turn groups", renderPrivateTurnGroupOptions]
+  ].forEach(([name, render]) => {
+    try {
+      render();
+    } catch (error) {
+      console.warn(`Render failed: ${name}`, error);
+    }
+  });
 }
 
 function renderProfile() {
