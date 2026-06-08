@@ -72,7 +72,17 @@ const appState = {
   groups: [],
   groupMembers: [],
   selectedTurnId: null,
-  activeThread: null
+  activeThread: null,
+  realtime: {
+    socket: null,
+    heartbeatTimer: null,
+    reconnectTimer: null,
+    reloadTimer: null,
+    ref: 0,
+    topic: null,
+    joined: false,
+    pendingReload: false
+  }
 };
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -288,6 +298,213 @@ async function supabaseFetch(path, options = {}) {
   }
 
   return payload;
+}
+
+function getRealtimeEndpoint() {
+  return `${SUPABASE_URL.replace("https://", "wss://")}/realtime/v1/websocket?apikey=${encodeURIComponent(SUPABASE_KEY)}&vsn=1.0.0`;
+}
+
+function nextRealtimeRef() {
+  appState.realtime.ref += 1;
+  return String(appState.realtime.ref);
+}
+
+function sendRealtimeMessage(topic, event, payload = {}, joinRef = null) {
+  const socket = appState.realtime.socket;
+
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    return;
+  }
+
+  socket.send(JSON.stringify([joinRef, nextRealtimeRef(), topic, event, payload]));
+}
+
+function getRealtimeChangesConfig() {
+  const userId = appState.profile?.id;
+
+  if (!userId) {
+    return [];
+  }
+
+  const groupTurnSubscriptions = appState.groups.map((group) => ({
+    event: "*",
+    schema: "public",
+    table: "university_turns",
+    filter: `group_id=eq.${group.id}`
+  }));
+
+  return [
+    {
+      event: "*",
+      schema: "public",
+      table: "university_turns",
+      filter: "visibility=eq.public"
+    },
+    {
+      event: "*",
+      schema: "public",
+      table: "university_turns",
+      filter: `driver_id=eq.${userId}`
+    },
+    ...groupTurnSubscriptions,
+    {
+      event: "*",
+      schema: "public",
+      table: "turn_messages",
+      filter: `sender_id=eq.${userId}`
+    },
+    {
+      event: "*",
+      schema: "public",
+      table: "turn_messages",
+      filter: `recipient_id=eq.${userId}`
+    },
+    {
+      event: "*",
+      schema: "public",
+      table: "turn_applications",
+      filter: `applicant_id=eq.${userId}`
+    },
+    {
+      event: "*",
+      schema: "public",
+      table: "turn_applications",
+      filter: `driver_id=eq.${userId}`
+    },
+    {
+      event: "*",
+      schema: "public",
+      table: "turn_history",
+      filter: `user_id=eq.${userId}`
+    }
+  ];
+}
+
+function startRealtimeSubscriptions() {
+  stopRealtimeSubscriptions();
+
+  if (!appState.session?.access_token || !appState.profile?.id) {
+    return;
+  }
+
+  const socket = new WebSocket(getRealtimeEndpoint());
+  const topic = `realtime:ubook:${appState.profile.id}`;
+
+  appState.realtime.socket = socket;
+  appState.realtime.topic = topic;
+  appState.realtime.joined = false;
+
+  socket.addEventListener("open", () => {
+    const payload = {
+      config: {
+        broadcast: { self: false },
+        presence: { key: appState.profile.id },
+        postgres_changes: getRealtimeChangesConfig()
+      },
+      access_token: appState.session.access_token
+    };
+
+    sendRealtimeMessage(topic, "phx_join", payload);
+    appState.realtime.heartbeatTimer = setInterval(() => {
+      sendRealtimeMessage("phoenix", "heartbeat", {});
+    }, 30000);
+  });
+
+  socket.addEventListener("message", (event) => {
+    handleRealtimeMessage(event.data);
+  });
+
+  socket.addEventListener("close", () => {
+    if (appState.realtime.socket !== socket) {
+      return;
+    }
+
+    cleanupRealtimeSocket(false);
+    scheduleRealtimeReconnect();
+  });
+
+  socket.addEventListener("error", () => {
+    socket.close();
+  });
+}
+
+function handleRealtimeMessage(data) {
+  let message;
+
+  try {
+    message = JSON.parse(data);
+  } catch {
+    return;
+  }
+
+  const [, , topic, event, payload] = message;
+
+  if (topic !== appState.realtime.topic) {
+    return;
+  }
+
+  if (event === "phx_reply" && payload?.status === "ok") {
+    appState.realtime.joined = true;
+    return;
+  }
+
+  if (event === "postgres_changes") {
+    scheduleRealtimeReload();
+  }
+}
+
+function scheduleRealtimeReload() {
+  if (!appState.session?.access_token) {
+    return;
+  }
+
+  appState.realtime.pendingReload = true;
+  window.clearTimeout(appState.realtime.reloadTimer);
+  appState.realtime.reloadTimer = window.setTimeout(async () => {
+    if (!appState.realtime.pendingReload) {
+      return;
+    }
+
+    appState.realtime.pendingReload = false;
+
+    try {
+      await loadAppData();
+    } catch (error) {
+      console.warn("Realtime refresh failed", error);
+    }
+  }, 500);
+}
+
+function scheduleRealtimeReconnect() {
+  if (!appState.session?.access_token || !appState.profile?.id) {
+    return;
+  }
+
+  window.clearTimeout(appState.realtime.reconnectTimer);
+  appState.realtime.reconnectTimer = window.setTimeout(() => {
+    startRealtimeSubscriptions();
+  }, 2500);
+}
+
+function cleanupRealtimeSocket(closeSocket = true) {
+  window.clearInterval(appState.realtime.heartbeatTimer);
+  window.clearTimeout(appState.realtime.reloadTimer);
+
+  if (closeSocket && appState.realtime.socket) {
+    appState.realtime.socket.close();
+  }
+
+  appState.realtime.socket = null;
+  appState.realtime.heartbeatTimer = null;
+  appState.realtime.reloadTimer = null;
+  appState.realtime.joined = false;
+  appState.realtime.pendingReload = false;
+}
+
+function stopRealtimeSubscriptions() {
+  window.clearTimeout(appState.realtime.reconnectTimer);
+  appState.realtime.reconnectTimer = null;
+  cleanupRealtimeSocket(true);
 }
 
 async function authSignUp({ name, university, commune, email, password }) {
@@ -657,8 +874,10 @@ async function bootstrapAuthenticatedApp() {
     await ensureProfile();
     await loadAppData();
     showApp();
+    startRealtimeSubscriptions();
     return true;
   } catch (error) {
+    stopRealtimeSubscriptions();
     clearSession();
     hideApp();
     showToast("Tu sesión expiró. Inicia sesión nuevamente.", "error");
@@ -711,7 +930,7 @@ async function loadAppData() {
   await loadTurnDriverProfiles(appState.turns);
   appState.turnApplications = await selectRows(
     "turn_applications",
-    "id,turn_id,applicant_id,applicant_name,applicant_email,status,created_at,updated_at,decided_at",
+    "id,turn_id,applicant_id,applicant_name,applicant_email,driver_id,status,created_at,updated_at,decided_at",
     "order=created_at.desc"
   ).catch(() => []);
   appState.history = await selectRows(
@@ -1964,11 +2183,7 @@ async function handleApplyToTurn(turn) {
 
   try {
     await insertRow("turn_applications", {
-      turn_id: turn.id,
-      applicant_id: appState.profile.id,
-      applicant_name: appState.profile.full_name,
-      applicant_email: appState.profile.email,
-      status: "pending"
+      turn_id: turn.id
     });
     await loadAppData();
     showToast("Postulación enviada. El emisor del turno debe aceptarte.", "success");
@@ -2362,6 +2577,7 @@ async function handleSendMessage(event) {
 
 async function logout() {
   await authLogout();
+  stopRealtimeSubscriptions();
   clearSession();
   hideApp();
   showToast("Sesión cerrada.", "info");
