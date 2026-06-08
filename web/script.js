@@ -387,7 +387,19 @@ function startRealtimeSubscriptions() {
     return;
   }
 
-  const socket = new WebSocket(getRealtimeEndpoint());
+  if (typeof WebSocket === "undefined") {
+    return;
+  }
+
+  let socket;
+
+  try {
+    socket = new WebSocket(getRealtimeEndpoint());
+  } catch (error) {
+    console.warn("Realtime connection unavailable", error);
+    return;
+  }
+
   const topic = `realtime:ubook:${appState.profile.id}`;
 
   appState.realtime.socket = socket;
@@ -874,7 +886,13 @@ async function bootstrapAuthenticatedApp() {
     await ensureProfile();
     await loadAppData();
     showApp();
-    startRealtimeSubscriptions();
+    window.setTimeout(() => {
+      try {
+        startRealtimeSubscriptions();
+      } catch (error) {
+        console.warn("Realtime startup failed", error);
+      }
+    }, 0);
     return true;
   } catch (error) {
     stopRealtimeSubscriptions();
