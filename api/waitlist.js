@@ -7,7 +7,7 @@ const UNIVERSITY_DOMAINS = [
   "usach.cl",
   "udp.cl",
   "unab.cl",
-  "uai.cl",
+  "alumnos.uai.cl",
   "umayor.cl",
   "santotomas.cl",
   "uss.cl",

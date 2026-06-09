@@ -493,7 +493,12 @@
 
         <div class="form-field auth-signup-field" hidden>
           <label for="auth-name">Nombre</label>
-          <input id="auth-name" name="name" type="text" placeholder="Ej: Agustín Lobos" autocomplete="off" maxlength="120" />
+          <input id="auth-name" name="name" type="text" placeholder="Ej: Agustín" autocomplete="given-name" maxlength="80" />
+        </div>
+
+        <div class="form-field auth-signup-field" hidden>
+          <label for="auth-last-name">Apellido</label>
+          <input id="auth-last-name" name="last_name" type="text" placeholder="Ej: Lobos" autocomplete="family-name" maxlength="80" />
         </div>
 
         <div class="form-field auth-signup-field" hidden>
@@ -506,14 +511,24 @@
           <input id="auth-commune" name="commune" type="text" placeholder="Ej: Chicureo" autocomplete="off" maxlength="120" />
         </div>
 
+        <div class="form-field auth-signup-field" hidden>
+          <label for="auth-rut">RUT</label>
+          <input id="auth-rut" name="rut" type="text" placeholder="Ej: 12.345.678-9" autocomplete="off" inputmode="text" maxlength="12" />
+        </div>
+
+        <div class="form-field auth-signup-field" hidden>
+          <label for="auth-phone">Número de teléfono</label>
+          <input id="auth-phone" name="phone" type="tel" placeholder="Ej: +56 9 1234 5678" autocomplete="tel" maxlength="20" />
+        </div>
+
         <div class="form-field">
           <label for="auth-email">Correo universitario</label>
-          <input id="auth-email" name="ubook_access_email" type="email" placeholder="nombre@universidad.cl" autocomplete="off" autocapitalize="none" spellcheck="false" readonly data-lpignore="true" data-1p-ignore maxlength="160" required />
+          <input id="auth-email" name="email" type="email" placeholder="nombre@universidad.cl" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="160" required />
         </div>
 
         <div class="form-field">
           <label for="auth-password">Contraseña</label>
-          <input id="auth-password" class="password-mask" name="ubook_access_code" type="text" placeholder="Mínimo 6 caracteres" autocomplete="off" autocapitalize="none" spellcheck="false" readonly data-lpignore="true" data-1p-ignore minlength="6" required />
+          <input id="auth-password" name="password" type="password" placeholder="Mínimo 6 caracteres" autocomplete="current-password" autocapitalize="none" spellcheck="false" minlength="6" required />
         </div>
 
         <button class="button button--primary button--full" type="submit">
@@ -530,13 +545,14 @@
   <!-- AUTHENTICATED APP -->
   <section class="ubook-app" data-app hidden>
     <aside class="app-sidebar">
-      <a class="brand" href="#home" aria-label="UBook app">
+      <a class="brand" href="#turns" aria-label="UBook app" data-action="go-turns">
         <span class="brand__u">U</span>
         <span class="brand__book">Book</span>
       </a>
 
       <nav class="app-tabs" aria-label="Aplicación UBook">
         <button class="app-tab is-active" type="button" data-app-tab="turns">Turnos</button>
+        <button class="app-tab" type="button" data-app-tab="my-trips">Mis Viajes</button>
         <button class="app-tab" type="button" data-app-tab="ulife"><span class="ulife-tab__u">U</span>Life</button>
         <button class="app-tab" type="button" data-app-tab="messages">Mensajes</button>
         <button class="app-tab" type="button" data-app-tab="reports">Denuncias</button>
@@ -601,6 +617,10 @@
             <input id="turn-filter-day" name="day" type="date" />
           </div>
           <div class="form-field">
+            <label for="turn-filter-time">Hora de salida</label>
+            <input id="turn-filter-time" name="departure_time" type="text" placeholder="Ej: 07:30" inputmode="numeric" maxlength="5" autocomplete="off" />
+          </div>
+          <div class="form-field">
             <label for="turn-filter-sort">Orden</label>
             <select id="turn-filter-sort" name="sort">
               <option value="default">Relevancia</option>
@@ -628,7 +648,7 @@
           </div>
           <div class="form-field">
             <label for="turn-time">Hora de salida</label>
-            <input id="turn-time" name="time" type="text" placeholder="Ej: 07:30" inputmode="numeric" pattern="^([01]?[0-9]|2[0-3]):[0-5][0-9]$" maxlength="5" autocomplete="off" required />
+            <input id="turn-time" name="time" type="tel" placeholder="Ej: 07:30" inputmode="numeric" maxlength="5" autocomplete="off" required />
           </div>
           <div class="form-field">
             <label for="turn-date">Fecha</label>
@@ -648,6 +668,37 @@
         <div class="turns-grid" data-turns-list></div>
 
         <article class="turn-detail" data-turn-detail hidden></article>
+      </section>
+
+      <section class="app-panel" data-panel="my-trips">
+        <div class="panel-header">
+          <div>
+            <h2>Mis Viajes</h2>
+            <p>Gestiona solicitudes, revisa turnos pendientes, cancela idas y consulta tu historial.</p>
+          </div>
+        </div>
+
+        <section class="my-trips-section">
+          <div class="panel-header">
+            <div>
+              <h3>Gestión de turnos</h3>
+              <p>Solicitudes como conductor y estado de tus postulaciones como pasajero.</p>
+            </div>
+          </div>
+          <div class="trip-management" data-trip-management></div>
+        </section>
+
+        <section class="profile-history">
+          <div class="panel-header">
+            <div>
+              <h3>Historial de turnos</h3>
+              <p>Calendario ordenado con los turnos que has publicado o registrado como viajes realizados.</p>
+            </div>
+          </div>
+
+          <div class="history-spend-summary" data-history-spend></div>
+          <div class="history-calendar" data-history-calendar></div>
+        </section>
       </section>
 
       <section class="app-panel" data-panel="ulife">
@@ -752,7 +803,7 @@
             </div>
             <div class="form-field">
               <label for="private-turn-time">Hora de salida</label>
-              <input id="private-turn-time" name="time" type="text" placeholder="Ej: 07:30" inputmode="numeric" pattern="^([01]?[0-9]|2[0-3]):[0-5][0-9]$" maxlength="5" autocomplete="off" required />
+              <input id="private-turn-time" name="time" type="tel" placeholder="Ej: 07:30" inputmode="numeric" maxlength="5" autocomplete="off" required />
             </div>
             <div class="form-field">
               <label for="private-turn-date">Fecha</label>
@@ -774,7 +825,10 @@
         <div class="messages-layout">
           <aside class="threads-list" data-threads-list></aside>
           <div class="chat-panel">
-            <div class="chat-header" data-chat-header>Selecciona un turno con usuario real para conversar.</div>
+            <div class="chat-header">
+              <span data-chat-header>Selecciona un turno con usuario real para conversar.</span>
+              <button class="chat-delete-button" type="button" data-delete-chat hidden>Borrar conversación</button>
+            </div>
             <div class="chat-messages" data-chat-messages></div>
             <form class="chat-form" data-form="message" autocomplete="off">
               <input name="message" type="text" placeholder="Escribe un mensaje" maxlength="1000" autocomplete="off" required />
@@ -870,27 +924,23 @@
             <input id="profile-commune" name="commune" type="text" autocomplete="off" maxlength="120" required />
           </div>
           <div class="form-field">
+            <label for="profile-rut">RUT</label>
+            <input id="profile-rut" name="rut" type="text" autocomplete="off" disabled />
+          </div>
+          <div class="form-field">
+            <label for="profile-phone">Número de teléfono</label>
+            <input id="profile-phone" name="phone" type="tel" autocomplete="tel" maxlength="20" required />
+          </div>
+          <div class="form-field">
             <label for="profile-email">Correo</label>
             <input id="profile-email" name="email" type="email" autocomplete="off" disabled />
           </div>
           <button class="button button--primary" type="submit">Guardar perfil</button>
         </form>
-
-        <section class="profile-history">
-          <div class="panel-header">
-            <div>
-              <h3>Historial de turnos</h3>
-              <p>Calendario ordenado con los turnos que has publicado o registrado como viajes realizados.</p>
-            </div>
-          </div>
-
-          <div class="history-spend-summary" data-history-spend></div>
-          <div class="history-calendar" data-history-calendar></div>
-        </section>
       </section>
     </div>
   </section>
 
-  <script src="script.js?v=20260608-session-fix"></script>
+  <script src="script.js?v=20260609-driver-cancel-rpc"></script>
 </body>
 </html>

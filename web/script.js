@@ -3,6 +3,7 @@
 const SUPABASE_URL = "https://ajvmyxwzmyksmjxzpgkt.supabase.co";
 const SUPABASE_KEY = "sb_publishable_qPIVUE1aqQWplNaQzFHe1A_X4RKKoIG";
 const SESSION_KEY = "ubook_session";
+const CANCELLED_TRIPS_KEY = "ubook_cancelled_trips";
 
 const UNIVERSITY_DOMAINS = [
   "udd.cl",
@@ -52,6 +53,20 @@ const NEARBY_LOCATIONS = {
   "puente alto": ["la florida", "pirque", "san jose de maipo"]
 };
 
+const REALTIME_BACKOFF_BASE_MS = 1000;
+const REALTIME_BACKOFF_MAX_MS = 30000;
+const REALTIME_HEARTBEAT_MS = 30000;
+const REALTIME_JOIN_TIMEOUT_MS = 8000;
+const REALTIME_EVENT_CACHE_LIMIT = 250;
+// These are the public-schema tables whose visible rows must drive the UI.
+// Row visibility still comes from Supabase RLS, not from this client list.
+const REALTIME_PUBLIC_TABLES = [
+  "university_turns",
+  "turn_applications",
+  "turn_messages",
+  "turn_history"
+];
+
 const appState = {
   authMode: "login",
   session: null,
@@ -59,10 +74,16 @@ const appState = {
   profile: null,
   turns: [],
   turnApplications: [],
+  locallyCancelledTurnIds: new Set(),
+  locallyCancelledApplicationIds: new Set(),
+  locallyDeletedHistoryIds: new Set(),
+  locallyDeletedHistoryTurnIds: new Set(),
+  applicationStatusSnapshot: {},
   driverProfiles: {},
   turnFilters: {
     sector: "",
     day: "",
+    departureTime: "",
     sort: "default"
   },
   history: [],
@@ -73,15 +94,20 @@ const appState = {
   groupMembers: [],
   selectedTurnId: null,
   activeThread: null,
+  activeTab: "turns",
   realtime: {
     socket: null,
     heartbeatTimer: null,
+    joinTimer: null,
     reconnectTimer: null,
-    reloadTimer: null,
     ref: 0,
     topic: null,
     joined: false,
-    pendingReload: false
+    intentionalClose: false,
+    reconnectAttempts: 0,
+    subscriptionKey: "",
+    seenEvents: new Set(),
+    seenEventOrder: []
   }
 };
 
@@ -95,6 +121,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initProfilePhotoInput();
   initScrollAnimations();
   initNavigationState();
+  initRealtimeLifecycle();
 
   appState.session = getStoredSession();
 
@@ -102,6 +129,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     await bootstrapAuthenticatedApp();
   }
 });
+
+function initRealtimeLifecycle() {
+  window.addEventListener("online", () => {
+    startRealtimeSubscriptions(true);
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && appState.session?.access_token) {
+      startRealtimeSubscriptions(true);
+    }
+  });
+}
 
 function scrollToElement(selector) {
   const element = document.querySelector(selector);
@@ -115,17 +154,20 @@ function scrollToElement(selector) {
 }
 
 function showToast(message, type = "info") {
-  const oldToast = document.querySelector(".ubook-toast");
+  let stack = document.querySelector("[data-toast-stack]");
 
-  if (oldToast) {
-    oldToast.remove();
+  if (!stack) {
+    stack = document.createElement("div");
+    stack.className = "ubook-toast-stack";
+    stack.dataset.toastStack = "";
+    document.body.appendChild(stack);
   }
 
   const toast = document.createElement("div");
   toast.className = `ubook-toast ${type}`;
   toast.textContent = message;
 
-  document.body.appendChild(toast);
+  stack.appendChild(toast);
 
   setTimeout(() => {
     toast.classList.add("show");
@@ -201,7 +243,7 @@ function money(value) {
 
 function formatTurnDate(dateValue) {
   if (!dateValue) {
-    return "Por definir";
+    return "";
   }
 
   return new Date(`${dateValue}T12:00:00`).toLocaleDateString("es-CL", {
@@ -213,13 +255,34 @@ function formatTurnDate(dateValue) {
 
 function formatTurnTime(timeValue) {
   if (!timeValue) {
-    return "Por definir";
+    return "";
   }
 
   return String(timeValue).slice(0, 5);
 }
 
 function normalizeTurnTime(timeValue) {
+  const digits = String(timeValue || "")
+    .trim()
+    .replace(/[^\d]/g, "");
+
+  if (!digits) {
+    return "";
+  }
+
+  if (digits.length === 3 || digits.length === 4) {
+    const hours = digits.slice(0, -2);
+    const minutes = digits.slice(-2);
+    const normalized = `${hours}:${minutes}`;
+    const match = normalized.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+
+    if (!match) {
+      return "";
+    }
+
+    return `${match[1].padStart(2, "0")}:${match[2]}`;
+  }
+
   const match = String(timeValue || "").trim().match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
 
   if (!match) {
@@ -227,6 +290,19 @@ function normalizeTurnTime(timeValue) {
   }
 
   return `${match[1].padStart(2, "0")}:${match[2]}`;
+}
+
+function normalizeTimeFilterValue(value) {
+  const cleanValue = String(value || "").trim();
+  const digits = cleanValue.replace(/\D/g, "");
+
+  if (/^\d{3,4}$/.test(digits)) {
+    const hours = digits.slice(0, -2);
+    const minutes = digits.slice(-2);
+    return normalizeTurnTime(`${hours}:${minutes}`);
+  }
+
+  return normalizeTurnTime(cleanValue);
 }
 
 function normalizeVehiclePlate(value) {
@@ -238,6 +314,61 @@ function normalizeVehiclePlate(value) {
 
 function isValidVehiclePlate(value) {
   return /^[A-Z0-9]{4,10}$/.test(value);
+}
+
+function normalizeRut(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^0-9K]/g, "");
+}
+
+function formatRut(value) {
+  const cleanRut = normalizeRut(value);
+
+  if (cleanRut.length <= 1) {
+    return cleanRut;
+  }
+
+  const body = cleanRut.slice(0, -1);
+  const checkDigit = cleanRut.slice(-1);
+  const formattedBody = body.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+
+  return `${formattedBody}-${checkDigit}`;
+}
+
+function isValidRut(value) {
+  const cleanRut = normalizeRut(value);
+
+  if (!/^\d{7,8}[0-9K]$/.test(cleanRut)) {
+    return false;
+  }
+
+  const body = cleanRut.slice(0, -1);
+  const expectedCheckDigit = cleanRut.slice(-1);
+  let multiplier = 2;
+  let sum = 0;
+
+  for (let index = body.length - 1; index >= 0; index -= 1) {
+    sum += Number(body[index]) * multiplier;
+    multiplier = multiplier === 7 ? 2 : multiplier + 1;
+  }
+
+  const remainder = 11 - (sum % 11);
+  const checkDigit = remainder === 11 ? "0" : remainder === 10 ? "K" : String(remainder);
+
+  return checkDigit === expectedCheckDigit;
+}
+
+function normalizePhone(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^\d+]/g, "")
+    .replace(/(?!^)\+/g, "");
+}
+
+function isValidPhone(value) {
+  const phone = normalizePhone(value);
+  return /^\+?\d{8,15}$/.test(phone);
 }
 
 function getStoredSession() {
@@ -269,6 +400,9 @@ function clearSession() {
   appState.session = null;
   appState.user = null;
   appState.profile = null;
+  appState.realtime.seenEvents.clear();
+  appState.realtime.seenEventOrder = [];
+  appState.realtime.subscriptionKey = "";
   localStorage.removeItem(SESSION_KEY);
   sessionStorage.removeItem(SESSION_KEY);
 }
@@ -282,6 +416,42 @@ function getTokenPayload(token) {
   } catch {
     return null;
   }
+}
+
+function getCancelledTripsStorageKey() {
+  return `${CANCELLED_TRIPS_KEY}:${appState.profile?.id || "anonymous"}`;
+}
+
+function loadPersistedCancelledTrips() {
+  if (!appState.profile?.id) {
+    return;
+  }
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(getCancelledTripsStorageKey()) || "{}");
+    appState.locallyCancelledTurnIds = new Set((Array.isArray(stored.turnIds) ? stored.turnIds : []).map(String));
+    appState.locallyCancelledApplicationIds = new Set((Array.isArray(stored.applicationIds) ? stored.applicationIds : []).map(String));
+    appState.locallyDeletedHistoryIds = new Set((Array.isArray(stored.historyIds) ? stored.historyIds : []).map(String));
+    appState.locallyDeletedHistoryTurnIds = new Set((Array.isArray(stored.historyTurnIds) ? stored.historyTurnIds : []).map(String));
+  } catch {
+    appState.locallyCancelledTurnIds = new Set();
+    appState.locallyCancelledApplicationIds = new Set();
+    appState.locallyDeletedHistoryIds = new Set();
+    appState.locallyDeletedHistoryTurnIds = new Set();
+  }
+}
+
+function savePersistedCancelledTrips() {
+  if (!appState.profile?.id) {
+    return;
+  }
+
+  localStorage.setItem(getCancelledTripsStorageKey(), JSON.stringify({
+    turnIds: [...appState.locallyCancelledTurnIds],
+    applicationIds: [...appState.locallyCancelledApplicationIds],
+    historyIds: [...appState.locallyDeletedHistoryIds],
+    historyTurnIds: [...appState.locallyDeletedHistoryTurnIds]
+  }));
 }
 
 function isAccessTokenExpiring(token) {
@@ -324,6 +494,9 @@ async function refreshSession() {
   }
 
   saveSession(payload);
+  if (appState.realtime.socket) {
+    startRealtimeSubscriptions(true);
+  }
   return appState.session;
 }
 
@@ -423,6 +596,14 @@ function getRealtimeChangesConfig() {
     table: "university_turns",
     filter: `group_id=eq.${group.id}`
   }));
+  const messageSubscriptions = appState.activeTab === "messages" && appState.activeThread?.turnId
+    ? [{
+      event: "*",
+      schema: "public",
+      table: "turn_messages",
+      filter: `turn_id=eq.${appState.activeThread.turnId}`
+    }]
+    : [];
 
   return [
     {
@@ -438,18 +619,7 @@ function getRealtimeChangesConfig() {
       filter: `driver_id=eq.${userId}`
     },
     ...groupTurnSubscriptions,
-    {
-      event: "*",
-      schema: "public",
-      table: "turn_messages",
-      filter: `sender_id=eq.${userId}`
-    },
-    {
-      event: "*",
-      schema: "public",
-      table: "turn_messages",
-      filter: `recipient_id=eq.${userId}`
-    },
+    ...messageSubscriptions,
     {
       event: "*",
       schema: "public",
@@ -471,7 +641,20 @@ function getRealtimeChangesConfig() {
   ];
 }
 
-function startRealtimeSubscriptions() {
+function getRealtimeSubscriptionKey(config = getRealtimeChangesConfig()) {
+  return JSON.stringify(config.map((item) => {
+    return `${item.schema}:${item.table}:${item.event}:${item.filter || "*"}`;
+  }).sort());
+}
+
+function startRealtimeSubscriptions(force = false) {
+  const changesConfig = getRealtimeChangesConfig();
+  const subscriptionKey = getRealtimeSubscriptionKey(changesConfig);
+
+  if (!force && appState.realtime.socket && appState.realtime.subscriptionKey === subscriptionKey) {
+    return;
+  }
+
   stopRealtimeSubscriptions();
 
   if (!appState.session?.access_token || !appState.profile?.id) {
@@ -496,21 +679,27 @@ function startRealtimeSubscriptions() {
   appState.realtime.socket = socket;
   appState.realtime.topic = topic;
   appState.realtime.joined = false;
+  appState.realtime.intentionalClose = false;
+  appState.realtime.subscriptionKey = subscriptionKey;
 
   socket.addEventListener("open", () => {
+    console.info("Realtime subscription created", {
+      tables: [...new Set(changesConfig.map((item) => item.table))],
+      filters: changesConfig
+    });
+
     const payload = {
       config: {
         broadcast: { self: false },
         presence: { key: appState.profile.id },
-        postgres_changes: getRealtimeChangesConfig()
+        postgres_changes: changesConfig
       },
       access_token: appState.session.access_token
     };
 
     sendRealtimeMessage(topic, "phx_join", payload);
-    appState.realtime.heartbeatTimer = setInterval(() => {
-      sendRealtimeMessage("phoenix", "heartbeat", {});
-    }, 30000);
+    scheduleRealtimeJoinTimeout();
+    scheduleRealtimeHeartbeat();
   });
 
   socket.addEventListener("message", (event) => {
@@ -523,12 +712,24 @@ function startRealtimeSubscriptions() {
     }
 
     cleanupRealtimeSocket(false);
-    scheduleRealtimeReconnect();
+    if (!appState.realtime.intentionalClose) {
+      scheduleRealtimeReconnect();
+    }
   });
 
   socket.addEventListener("error", () => {
     socket.close();
   });
+}
+
+function scheduleRealtimeJoinTimeout() {
+  window.clearTimeout(appState.realtime.joinTimer);
+  appState.realtime.joinTimer = window.setTimeout(() => {
+    if (!appState.realtime.joined) {
+      console.warn("Realtime join timed out; reconnecting.");
+      socketCloseForReconnect();
+    }
+  }, REALTIME_JOIN_TIMEOUT_MS);
 }
 
 function handleRealtimeMessage(data) {
@@ -540,7 +741,9 @@ function handleRealtimeMessage(data) {
     return;
   }
 
-  const [, , topic, event, payload] = message;
+  const [joinRef, ref, topic, event, payload] = Array.isArray(message)
+    ? message
+    : [message.join_ref, message.ref, message.topic, message.event, message.payload];
 
   if (topic !== appState.realtime.topic) {
     return;
@@ -548,34 +751,57 @@ function handleRealtimeMessage(data) {
 
   if (event === "phx_reply" && payload?.status === "ok") {
     appState.realtime.joined = true;
+    appState.realtime.reconnectAttempts = 0;
+    window.clearTimeout(appState.realtime.joinTimer);
+    return;
+  }
+
+  if (event === "phx_reply" && payload?.status === "error") {
+    console.warn("Realtime subscription error", {
+      payload: payload?.response || payload
+    });
+    socketCloseForReconnect();
+    return;
+  }
+
+  if (event === "system") {
+    if (payload?.status === "ok") {
+      appState.realtime.joined = true;
+      appState.realtime.reconnectAttempts = 0;
+      window.clearTimeout(appState.realtime.joinTimer);
+    } else if (payload?.status === "error") {
+      console.warn("Realtime subscription error", {
+        payload
+      });
+      socketCloseForReconnect();
+    }
     return;
   }
 
   if (event === "postgres_changes") {
-    scheduleRealtimeReload();
+    applyRealtimeChange(payload, { joinRef, ref });
   }
 }
 
-function scheduleRealtimeReload() {
-  if (!appState.session?.access_token) {
+function scheduleRealtimeHeartbeat() {
+  window.clearTimeout(appState.realtime.heartbeatTimer);
+
+  if (!appState.realtime.socket || appState.realtime.socket.readyState !== WebSocket.OPEN) {
     return;
   }
 
-  appState.realtime.pendingReload = true;
-  window.clearTimeout(appState.realtime.reloadTimer);
-  appState.realtime.reloadTimer = window.setTimeout(async () => {
-    if (!appState.realtime.pendingReload) {
-      return;
-    }
+  appState.realtime.heartbeatTimer = window.setTimeout(() => {
+    sendRealtimeMessage("phoenix", "heartbeat", {});
+    scheduleRealtimeHeartbeat();
+  }, REALTIME_HEARTBEAT_MS);
+}
 
-    appState.realtime.pendingReload = false;
-
-    try {
-      await loadAppData();
-    } catch (error) {
-      console.warn("Realtime refresh failed", error);
-    }
-  }, 500);
+function socketCloseForReconnect() {
+  if (appState.realtime.socket && appState.realtime.socket.readyState <= WebSocket.OPEN) {
+    appState.realtime.socket.close();
+  } else {
+    scheduleRealtimeReconnect();
+  }
 }
 
 function scheduleRealtimeReconnect() {
@@ -583,25 +809,32 @@ function scheduleRealtimeReconnect() {
     return;
   }
 
+  appState.realtime.reconnectAttempts += 1;
+  const delay = Math.min(
+    REALTIME_BACKOFF_MAX_MS,
+    REALTIME_BACKOFF_BASE_MS * (2 ** Math.max(0, appState.realtime.reconnectAttempts - 1))
+  );
+  const jitter = Math.floor(Math.random() * 300);
+
   window.clearTimeout(appState.realtime.reconnectTimer);
   appState.realtime.reconnectTimer = window.setTimeout(() => {
     startRealtimeSubscriptions();
-  }, 2500);
+  }, delay + jitter);
 }
 
 function cleanupRealtimeSocket(closeSocket = true) {
-  window.clearInterval(appState.realtime.heartbeatTimer);
-  window.clearTimeout(appState.realtime.reloadTimer);
+  window.clearTimeout(appState.realtime.heartbeatTimer);
+  window.clearTimeout(appState.realtime.joinTimer);
 
   if (closeSocket && appState.realtime.socket) {
+    appState.realtime.intentionalClose = true;
     appState.realtime.socket.close();
   }
 
   appState.realtime.socket = null;
   appState.realtime.heartbeatTimer = null;
-  appState.realtime.reloadTimer = null;
+  appState.realtime.joinTimer = null;
   appState.realtime.joined = false;
-  appState.realtime.pendingReload = false;
 }
 
 function stopRealtimeSubscriptions() {
@@ -610,7 +843,332 @@ function stopRealtimeSubscriptions() {
   cleanupRealtimeSocket(true);
 }
 
-async function authSignUp({ name, university, commune, email, password }) {
+function refreshRealtimeSubscriptionsIfNeeded() {
+  if (!appState.session?.access_token || !appState.profile?.id) {
+    return;
+  }
+
+  if (getRealtimeSubscriptionKey() !== appState.realtime.subscriptionKey) {
+    startRealtimeSubscriptions();
+  }
+}
+
+function applyRealtimeChange(payload) {
+  const change = normalizeRealtimeChange(payload);
+
+  if (!change) {
+    console.warn("Realtime subscription error", {
+      table: null,
+      payload,
+      reason: "Realtime change payload was not recognized"
+    });
+    return;
+  }
+
+  const table = change.table;
+
+  console.info("Realtime event received", {
+    table,
+    payload
+  });
+
+  if (!REALTIME_PUBLIC_TABLES.includes(table) || hasSeenRealtimeEvent(change)) {
+    return;
+  }
+
+  switch (table) {
+    case "university_turns":
+      applyRealtimeTurn(change);
+      break;
+    case "turn_applications":
+      applyRealtimeApplication(change);
+      break;
+    case "turn_messages":
+      applyRealtimeMessage(change);
+      break;
+    case "turn_history":
+      applyRealtimeHistory(change);
+      break;
+    default:
+      break;
+  }
+}
+
+function normalizeRealtimeChange(payload) {
+  const data = payload?.data || payload;
+
+  if (!data?.table) {
+    return null;
+  }
+
+  return {
+    ...data,
+    schema: data.schema || "public",
+    type: data.type || data.eventType || data.event || "",
+    record: data.record || data.new || null,
+    old_record: data.old_record || data.old || null,
+    commit_timestamp: data.commit_timestamp || data.commitTimestamp || payload?.commit_timestamp || ""
+  };
+}
+
+function hasSeenRealtimeEvent(change) {
+  const row = change.record || change.old_record || {};
+  const rowId = row.id || row.turn_id || row.user_id || "";
+  const eventId = [
+    change.commit_timestamp,
+    change.schema,
+    change.table,
+    change.type,
+    rowId
+  ].join(":");
+
+  // Reconnects can replay the same logical row change; cache recent ids so
+  // optimistic local updates are not applied twice.
+  if (appState.realtime.seenEvents.has(eventId)) {
+    return true;
+  }
+
+  appState.realtime.seenEvents.add(eventId);
+  appState.realtime.seenEventOrder.push(eventId);
+
+  while (appState.realtime.seenEventOrder.length > REALTIME_EVENT_CACHE_LIMIT) {
+    const oldestEvent = appState.realtime.seenEventOrder.shift();
+    appState.realtime.seenEvents.delete(oldestEvent);
+  }
+
+  return false;
+}
+
+function applyRealtimeTurn(change) {
+  const turn = change.record;
+  const oldTurn = change.old_record;
+  const turnId = turn?.id || oldTurn?.id;
+
+  if (!turnId) return;
+
+  if (change.type === "DELETE" || turn?.status !== "active" || appState.locallyCancelledTurnIds.has(String(turnId))) {
+    removeById(appState.turns, turnId);
+    appState.turnApplications = appState.turnApplications.filter((application) => application.turn_id !== turnId);
+
+    if (sameId(appState.selectedTurnId, turnId)) {
+      appState.selectedTurnId = null;
+    }
+  } else if (isCompleteTurn(turn)) {
+    upsertById(appState.turns, turn);
+    appState.turns = sortTurnsForProfile(appState.turns);
+    ensureDriverProfileForTurn(turn);
+  }
+
+  renderApp();
+  refreshRealtimeSubscriptionsIfNeeded();
+}
+
+async function ensureDriverProfileForTurn(turn) {
+  if (!turn?.driver_id || appState.driverProfiles[turn.driver_id]) {
+    return;
+  }
+
+  try {
+    const [driver] = await selectRows(
+      "profiles",
+      "id,full_name,avatar_url,rating,rating_count",
+      `id=eq.${encodeURIComponent(turn.driver_id)}`
+    );
+
+    if (driver) {
+      appState.driverProfiles[driver.id] = driver;
+      renderApp();
+      refreshRealtimeSubscriptionsIfNeeded();
+    }
+  } catch (error) {
+    console.warn("Realtime driver profile sync failed", error);
+  }
+}
+
+function applyRealtimeApplication(change) {
+  const application = change.record;
+  const oldApplication = change.old_record;
+  const applicationId = application?.id || oldApplication?.id;
+
+  if (!applicationId) return;
+
+  if (change.type === "DELETE" || appState.locallyCancelledApplicationIds.has(String(applicationId))) {
+    removeById(appState.turnApplications, applicationId);
+  } else {
+    const previous = appState.turnApplications.find((item) => sameId(item.id, applicationId));
+    upsertById(appState.turnApplications, application);
+    notifyApplicationStatusChanges(appState.turnApplications);
+
+    if (sameId(application.applicant_id, appState.profile?.id) && previous?.status !== application.status) {
+      renderMessages();
+    }
+  }
+
+  renderTurns();
+  renderTurnDetail();
+  renderMyTrips();
+  renderThreads();
+}
+
+function applyRealtimeMessage(change) {
+  const message = change.record;
+  const oldMessage = change.old_record;
+  const messageId = message?.id || oldMessage?.id;
+
+  if (!messageId) return;
+
+  if (change.type === "DELETE") {
+    removeById(appState.messages, messageId);
+  } else if ([message.sender_id, message.recipient_id].includes(appState.profile?.id)) {
+    upsertById(appState.messages, message);
+    appState.messages.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  }
+
+  renderThreads();
+  renderMessages();
+}
+
+function applyRealtimeHistory(change) {
+  const historyItem = change.record;
+  const oldHistoryItem = change.old_record;
+  const historyId = historyItem?.id || oldHistoryItem?.id;
+
+  if (!historyId) return;
+
+  if (
+    change.type === "DELETE"
+    || historyItem?.status === "deleted"
+    || appState.locallyDeletedHistoryIds.has(String(historyId))
+    || appState.locallyDeletedHistoryTurnIds.has(String(historyItem?.turn_id || oldHistoryItem?.turn_id))
+  ) {
+    removeById(appState.history, historyId);
+  } else if (historyItem.user_id === appState.profile?.id) {
+    upsertById(appState.history, historyItem);
+    appState.history.sort((a, b) => {
+      return `${b.ride_date} ${b.departure_time}`.localeCompare(`${a.ride_date} ${a.departure_time}`);
+    });
+  }
+
+  renderHistoryCalendar();
+  renderReportTurnOptions();
+}
+
+function applyRealtimeRating(change) {
+  const rating = change.record;
+  const oldRating = change.old_record;
+  const ratingId = rating?.id || oldRating?.id;
+
+  if (!ratingId) return;
+
+  if (change.type === "DELETE") {
+    removeById(appState.ratings, ratingId);
+  } else if (!appState.locallyDeletedHistoryIds.has(String(rating.history_id))) {
+    appState.ratings = appState.ratings.filter((item) => {
+      return !(String(item.id).startsWith("optimistic-") && item.history_id === rating.history_id);
+    });
+    upsertById(appState.ratings, rating);
+  }
+
+  renderRating();
+  renderHistoryCalendar();
+}
+
+function applyRealtimeProfile(change) {
+  const profile = change.record;
+  const oldProfile = change.old_record;
+  const profileId = profile?.id || oldProfile?.id;
+
+  if (!profileId) return;
+
+  if (change.type === "DELETE") {
+    delete appState.driverProfiles[profileId];
+    if (appState.profile?.id === profileId) {
+      logout();
+      return;
+    }
+  } else {
+    appState.driverProfiles[profileId] = {
+      ...(appState.driverProfiles[profileId] || {}),
+      ...profile
+    };
+
+    if (appState.profile?.id === profileId) {
+      appState.profile = {
+        ...appState.profile,
+        ...profile
+      };
+    }
+
+    appState.turns = appState.turns.map((turn) => {
+      return turn.driver_id === profileId
+        ? { ...turn, driver_rating: Number(profile.rating ?? turn.driver_rating ?? 0) }
+        : turn;
+    });
+  }
+
+  renderApp();
+}
+
+function applyRealtimeGroup(change) {
+  const group = change.record;
+  const oldGroup = change.old_record;
+  const groupId = group?.id || oldGroup?.id;
+
+  if (!groupId) return;
+
+  if (change.type === "DELETE") {
+    removeById(appState.groups, groupId);
+    appState.groupMembers = appState.groupMembers.filter((member) => member.group_id !== groupId);
+  } else {
+    upsertById(appState.groups, group);
+  }
+
+  renderGroups();
+  renderPrivateTurnGroupOptions();
+  refreshRealtimeSubscriptionsIfNeeded();
+}
+
+function applyRealtimeGroupMember(change) {
+  const member = change.record;
+  const oldMember = change.old_record;
+  const groupId = member?.group_id || oldMember?.group_id;
+  const userId = member?.user_id || oldMember?.user_id;
+
+  if (!groupId || !userId) return;
+
+  if (change.type === "DELETE") {
+    appState.groupMembers = appState.groupMembers.filter((item) => {
+      return item.group_id !== groupId || item.user_id !== userId;
+    });
+    appState.groups = appState.groups.filter((group) => group.id !== groupId);
+  } else {
+    upsertGroupMember(member);
+  }
+
+  renderGroups();
+  renderPrivateTurnGroupOptions();
+  refreshRealtimeSubscriptionsIfNeeded();
+}
+
+function applyRealtimeReport(change) {
+  const report = change.record;
+  const oldReport = change.old_record;
+  const reportId = report?.id || oldReport?.id;
+
+  if (!reportId) return;
+
+  if (change.type === "DELETE") {
+    removeById(appState.reports, reportId);
+  } else if (report.reporter_id === appState.profile?.id) {
+    upsertById(appState.reports, report);
+  }
+
+  renderReports();
+}
+
+async function authSignUp({ name, lastName, university, commune, rut, phone, email, password }) {
+  const fullName = normalizeText(`${name} ${lastName}`);
+
   return supabaseFetch("/auth/v1/signup", {
     method: "POST",
     auth: false,
@@ -618,9 +1176,13 @@ async function authSignUp({ name, university, commune, email, password }) {
       email,
       password,
       data: {
-        full_name: name,
+        full_name: fullName,
+        first_name: name,
+        last_name: lastName,
         university,
-        commune
+        commune,
+        rut,
+        phone
       }
     })
   });
@@ -632,6 +1194,25 @@ async function authSignIn(email, password) {
     auth: false,
     body: JSON.stringify({ email, password })
   });
+}
+
+async function checkRutAvailability(normalizedRut) {
+  if (!normalizedRut) {
+    return false;
+  }
+
+  try {
+    const matches = await selectRows(
+      "profiles",
+      "id",
+      `rut=eq.${encodeURIComponent(normalizedRut)}&limit=1`
+    );
+
+    return matches.length === 0;
+  } catch (error) {
+    console.warn("RUT uniqueness check unavailable", error);
+    return true;
+  }
 }
 
 async function authGetUser() {
@@ -691,6 +1272,15 @@ async function respondTurnApplication(applicationId, responseStatus) {
   });
 }
 
+async function cancelDriverTurnRpc(turnId) {
+  return supabaseFetch("/rest/v1/rpc/cancel_driver_turn", {
+    method: "POST",
+    body: JSON.stringify({
+      target_turn_id: turnId
+    })
+  });
+}
+
 function initActionButtons() {
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-action]");
@@ -738,6 +1328,16 @@ function handleAction(action) {
       }
 
       openAuthModal("login");
+      break;
+
+    case "go-turns":
+      if (appState.session) {
+        setActiveTab("turns");
+        document.querySelector('[data-panel="turns"]')?.scrollIntoView({
+          behavior: "smooth",
+          block: "start"
+        });
+      }
       break;
 
     case "logout":
@@ -800,7 +1400,7 @@ function closeModal(name) {
   document.body.classList.remove("modal-open");
 
   if (name === "auth") {
-    syncAuthAutocomplete(false);
+    syncAuthAutocomplete();
   }
 }
 
@@ -813,6 +1413,9 @@ function setAuthMode(mode) {
 
   document.querySelectorAll(".auth-signup-field").forEach((field) => {
     field.hidden = mode !== "signup";
+    field.querySelectorAll("input").forEach((input) => {
+      input.required = mode === "signup";
+    });
   });
 
   const authForm = document.querySelector('[data-form="auth"]');
@@ -824,7 +1427,7 @@ function setAuthMode(mode) {
   syncAuthAutocomplete();
 }
 
-function syncAuthAutocomplete(forceEnabled = null) {
+function syncAuthAutocomplete() {
   const authForm = document.querySelector('[data-form="auth"]');
   const emailInput = document.querySelector("#auth-email");
   const passwordInput = document.querySelector("#auth-password");
@@ -834,21 +1437,16 @@ function syncAuthAutocomplete(forceEnabled = null) {
   }
 
   if (emailInput) {
-    emailInput.autocomplete = "off";
-    emailInput.name = "ubook_access_email";
+    emailInput.autocomplete = appState.authMode === "signup" ? "email" : "username";
+    emailInput.name = "email";
+    emailInput.readOnly = false;
   }
 
   if (passwordInput) {
-    passwordInput.autocomplete = "off";
-    passwordInput.name = "ubook_access_code";
-  }
-
-  if (forceEnabled === false) {
-    [emailInput, passwordInput].forEach((input) => {
-      if (input) {
-        input.readOnly = true;
-      }
-    });
+    passwordInput.type = "password";
+    passwordInput.autocomplete = appState.authMode === "signup" ? "new-password" : "current-password";
+    passwordInput.name = "password";
+    passwordInput.readOnly = false;
   }
 }
 
@@ -857,7 +1455,7 @@ function initAuthForm() {
 
   if (!form) return;
 
-  initAuthInputProtection();
+  initRutInputProtection(form);
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -865,47 +1463,39 @@ function initAuthForm() {
   });
 }
 
-function initAuthInputProtection() {
-  const inputs = [
-    document.querySelector("#auth-email"),
-    document.querySelector("#auth-password")
-  ].filter(Boolean);
+function initRutInputProtection(form) {
+  const rutInput = form.querySelector('input[name="rut"]');
 
-  const unlock = (input) => {
-    input.readOnly = false;
-  };
+  if (!rutInput) return;
 
-  const lock = () => {
-    inputs.forEach((input) => {
-      input.readOnly = true;
+  rutInput.addEventListener("input", () => {
+    rutInput.value = formatRut(rutInput.value);
+  });
+
+  ["copy", "cut", "paste"].forEach((eventName) => {
+    rutInput.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      showToast("El RUT debe ingresarse manualmente.", "info");
     });
-  };
-
-  inputs.forEach((input) => {
-    input.addEventListener("pointerdown", () => unlock(input));
-    input.addEventListener("touchstart", () => unlock(input), { passive: true });
-    input.addEventListener("keydown", () => unlock(input));
   });
-
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") {
-      document.activeElement?.blur?.();
-      lock();
-    }
-  });
-
-  window.addEventListener("pageshow", lock);
 }
 
 async function handleAuthSubmit(form) {
   const nameInput = form.querySelector('input[name="name"]');
+  const lastNameInput = form.querySelector('input[name="last_name"]');
   const universityInput = form.querySelector('input[name="university"]');
   const communeInput = form.querySelector('input[name="commune"]');
+  const rutInput = form.querySelector('input[name="rut"]');
+  const phoneInput = form.querySelector('input[name="phone"]');
   const emailInput = document.querySelector("#auth-email");
   const passwordInput = document.querySelector("#auth-password");
   const name = normalizeText(nameInput.value);
+  const lastName = normalizeText(lastNameInput.value);
   const university = normalizeText(universityInput.value);
   const commune = normalizeText(communeInput.value);
+  const rut = formatRut(rutInput.value);
+  const normalizedRut = normalizeRut(rutInput.value);
+  const phone = normalizePhone(phoneInput.value);
   const email = normalizeText(emailInput.value).toLowerCase();
   const password = passwordInput.value;
 
@@ -925,8 +1515,18 @@ async function handleAuthSubmit(form) {
       return;
     }
 
-    if (!name || !university || !commune) {
-      showToast("Completa nombre, universidad y comuna para crear la cuenta.", "error");
+    if (!name || !lastName || !university || !commune || !rut || !phone || !email || !password) {
+      showToast("Completa todos los campos para crear la cuenta.", "error");
+      return;
+    }
+
+    if (!isValidRut(rut)) {
+      showToast("Ingresa un RUT chileno válido.", "error");
+      return;
+    }
+
+    if (!isValidPhone(phone)) {
+      showToast("Ingresa un número de teléfono válido.", "error");
       return;
     }
   }
@@ -936,7 +1536,17 @@ async function handleAuthSubmit(form) {
 
   try {
     if (appState.authMode === "signup") {
-      const signup = await authSignUp({ name, university, commune, email, password });
+      const rutAvailable = await checkRutAvailability(normalizedRut);
+
+      if (!rutAvailable) {
+        showToast("Este RUT ya está registrado en UBook.", "error");
+        return;
+      }
+
+      rutInput.value = rut;
+      phoneInput.value = phone;
+
+      const signup = await authSignUp({ name, lastName, university, commune, rut: normalizedRut, phone, email, password });
 
       if (!signup.access_token) {
         setAuthLoading(false);
@@ -1008,6 +1618,7 @@ async function bootstrapAuthenticatedApp() {
 
   try {
     await ensureProfile();
+    loadPersistedCancelledTrips();
     await loadAppData();
     showApp();
     window.setTimeout(() => {
@@ -1030,12 +1641,23 @@ async function ensureProfile() {
   const user = appState.user;
   const existing = await selectRows(
     "profiles",
-    "id,email,full_name,university,commune,avatar_url,rating,rating_count",
+    "id,email,full_name,university,commune,avatar_url,rating,rating_count,rut,phone",
     `id=eq.${encodeURIComponent(user.id)}`
-  );
+  ).catch(async (error) => {
+    console.warn("Profile identity columns unavailable", error);
+    return selectRows(
+      "profiles",
+      "id,email,full_name,university,commune,avatar_url,rating,rating_count",
+      `id=eq.${encodeURIComponent(user.id)}`
+    );
+  });
 
   if (existing[0]) {
-    appState.profile = existing[0];
+    appState.profile = {
+      ...existing[0],
+      rut: existing[0].rut || user.user_metadata?.rut || "",
+      phone: existing[0].phone || user.user_metadata?.phone || ""
+    };
     return;
   }
 
@@ -1049,10 +1671,20 @@ async function ensureProfile() {
     university: fallbackUniversity,
     commune: fallbackCommune
   };
-
-  await upsertRow("profiles", profile);
-  appState.profile = {
+  const profileWithIdentity = {
     ...profile,
+    rut: user.user_metadata?.rut || null,
+    phone: user.user_metadata?.phone || null
+  };
+
+  try {
+    await upsertRow("profiles", profileWithIdentity);
+  } catch (error) {
+    console.warn("Profile identity fields unavailable", error);
+    await upsertRow("profiles", profile);
+  }
+  appState.profile = {
+    ...profileWithIdentity,
     rating: 0,
     rating_count: 0
   };
@@ -1061,35 +1693,53 @@ async function ensureProfile() {
 async function loadAppData() {
   await loadGroupData();
 
+  const loadedApplications = await selectRows(
+    "turn_applications",
+    "id,turn_id,applicant_id,applicant_name,applicant_email,driver_id,status,created_at,updated_at,decided_at",
+    "order=created_at.desc"
+  ).catch(() => []);
+  const visibleApplications = loadedApplications.filter((application) => {
+    return !appState.locallyCancelledApplicationIds.has(String(application.id))
+      && !appState.locallyCancelledTurnIds.has(String(application.turn_id));
+  });
+  notifyApplicationStatusChanges(visibleApplications);
+  appState.turnApplications = visibleApplications;
   const turns = await selectRows(
     "university_turns",
     "id,driver_id,driver_name,driver_rating,origin,destination,university,departure_date,departure_time,seats_available,contribution_clp,vehicle_plate,visibility,group_id,status,created_at",
     "status=eq.active&order=departure_date.asc.nullslast&order=departure_time.asc"
   );
 
-  appState.turns = sortTurnsForProfile(turns);
-  await loadTurnDriverProfiles(appState.turns);
-  appState.turnApplications = await selectRows(
-    "turn_applications",
-    "id,turn_id,applicant_id,applicant_name,applicant_email,driver_id,status,created_at,updated_at,decided_at",
-    "order=created_at.desc"
-  ).catch(() => []);
-  appState.history = await selectRows(
+  appState.turns = sortTurnsForProfile(turns).filter((turn) => {
+    return isCompleteTurn(turn) && !appState.locallyCancelledTurnIds.has(String(turn.id));
+  });
+  const loadedHistory = await selectRows(
     "turn_history",
     "id,turn_id,driver_id,driver_name,origin,destination,university,ride_date,departure_time,contribution_clp,vehicle_plate,status,created_at",
     "order=ride_date.desc&order=departure_time.desc"
   ).catch(() => []);
-  appState.ratings = await selectRows(
+  appState.history = loadedHistory.filter((item) => {
+    return !appState.locallyDeletedHistoryIds.has(String(item.id))
+      && !appState.locallyDeletedHistoryTurnIds.has(String(item.turn_id))
+      && item.status !== "deleted";
+  });
+  const loadedRatings = await selectRows(
     "turn_ratings",
     "id,history_id,rating,updated_at",
     "order=updated_at.desc"
   ).catch(() => []);
+  appState.ratings = loadedRatings.filter((rating) => {
+    return !appState.locallyDeletedHistoryIds.has(String(rating.history_id));
+  });
   appState.messages = await selectRows(
     "turn_messages",
     "id,turn_id,sender_id,recipient_id,body,created_at",
     "order=created_at.asc"
   ).catch(() => []);
   appState.reports = [];
+  await completeExpiredTurns();
+  await loadTurnDriverProfiles(appState.turns);
+  await syncOwnPublishedTurnRatings();
 
   renderApp();
 }
@@ -1104,12 +1754,70 @@ async function loadTurnDriverProfiles(turns) {
 
   const drivers = await selectRows(
     "profiles",
-    "id,full_name,avatar_url",
+    "id,full_name,avatar_url,rating,rating_count",
     `id=in.(${driverIds.join(",")})`
   ).catch(() => []);
 
   appState.driverProfiles = drivers.reduce((acc, driver) => {
     acc[driver.id] = driver;
+    return acc;
+  }, {});
+}
+
+async function syncOwnPublishedTurnRatings() {
+  if (!appState.profile?.id) {
+    return;
+  }
+
+  const currentRating = Number(appState.profile.rating || 0);
+  const staleOwnTurns = appState.turns.filter((turn) => {
+    return sameId(turn.driver_id, appState.profile.id) && Number(turn.driver_rating || 0) !== currentRating;
+  });
+
+  if (!staleOwnTurns.length) {
+    return;
+  }
+
+  appState.turns = appState.turns.map((turn) => {
+    return sameId(turn.driver_id, appState.profile.id)
+      ? { ...turn, driver_rating: currentRating }
+      : turn;
+  });
+
+  try {
+    await updateRows("university_turns", `driver_id=eq.${encodeURIComponent(appState.profile.id)}&status=eq.active`, {
+      driver_rating: currentRating
+    });
+  } catch (error) {
+    console.warn("Own turn rating sync failed", error);
+  }
+}
+
+function notifyApplicationStatusChanges(applications) {
+  const previousSnapshot = appState.applicationStatusSnapshot || {};
+  const hasPreviousSnapshot = Object.keys(previousSnapshot).length > 0;
+
+  applications.forEach((application) => {
+    if (!sameId(application.applicant_id, appState.profile?.id)) {
+      return;
+    }
+
+    const previousStatus = previousSnapshot[application.id];
+
+    if (hasPreviousSnapshot && previousStatus && previousStatus !== application.status) {
+      if (application.status === "accepted") {
+        showToast("Su turno ha sido aceptado.", "success");
+      } else if (application.status === "rejected") {
+        showToast("Su turno ha sido rechazado.", "error");
+      }
+    }
+  });
+
+  appState.applicationStatusSnapshot = applications.reduce((acc, application) => {
+    if (sameId(application.applicant_id, appState.profile?.id)) {
+      acc[application.id] = application.status;
+    }
+
     return acc;
   }, {});
 }
@@ -1129,9 +1837,10 @@ async function loadGroupData() {
 
 function sortTurnsForProfile(turns) {
   const profileCommune = appState.profile?.commune;
+  const profileUniversity = appState.profile?.university;
 
   return [...turns].sort((a, b) => {
-    const scoreDiff = getTurnLocationScore(a, profileCommune) - getTurnLocationScore(b, profileCommune);
+    const scoreDiff = getTurnMatchScore(a, profileCommune, profileUniversity) - getTurnMatchScore(b, profileCommune, profileUniversity);
 
     if (scoreDiff !== 0) {
       return scoreDiff;
@@ -1141,8 +1850,62 @@ function sortTurnsForProfile(turns) {
   });
 }
 
+function isCompleteTurn(turn) {
+  const origin = normalizeText(turn?.origin);
+  const destination = normalizeText(turn?.destination);
+  const vehiclePlate = normalizeVehiclePlate(turn?.vehicle_plate);
+  const departureTime = normalizeTurnTime(formatTurnTime(turn?.departure_time));
+  const departureDate = String(turn?.departure_date || "").trim();
+  const seats = Number(turn?.seats_available);
+  const contribution = Number(turn?.contribution_clp);
+
+  return Boolean(
+    origin &&
+    destination &&
+    vehiclePlate &&
+    isValidVehiclePlate(vehiclePlate) &&
+    departureDate &&
+    departureTime &&
+    Number.isInteger(seats) &&
+    seats >= 0 &&
+    seats <= 8 &&
+    Number.isFinite(contribution) &&
+    contribution >= 0 &&
+    contribution <= 100000
+  );
+}
+
+function getTurnMatchScore(turn, profileCommune, profileUniversity) {
+  const universityMatch = getTurnUniversityScore(turn, profileUniversity);
+  const locationScore = getTurnLocationScore(turn, profileCommune);
+  const destinationScore = getTurnDestinationScore(turn, profileUniversity);
+
+  return (locationScore * 100) + (universityMatch * 10) + destinationScore;
+}
+
+function getTurnUniversityScore(turn, profileUniversity) {
+  const userUniversity = normalizeLocation(profileUniversity);
+  const turnUniversity = normalizeLocation(turn.university);
+
+  if (!userUniversity || !turnUniversity) {
+    return 1;
+  }
+
+  return locationIncludes(turnUniversity, userUniversity) || locationIncludes(userUniversity, turnUniversity) ? 0 : 1;
+}
+
+function getTurnDestinationScore(turn, profileUniversity) {
+  const userUniversity = normalizeLocation(profileUniversity);
+
+  if (!userUniversity) {
+    return 1;
+  }
+
+  return [turn.destination, turn.university].some((value) => locationIncludes(value, userUniversity)) ? 0 : 1;
+}
+
 function applyTurnFilters(turns) {
-  const { sector, day, sort } = appState.turnFilters;
+  const { sector, day, departureTime, sort } = appState.turnFilters;
   let filtered = [...turns];
 
   if (sector) {
@@ -1154,6 +1917,12 @@ function applyTurnFilters(turns) {
   if (day) {
     filtered = filtered.filter((turn) => {
       return turn.departure_date === day;
+    });
+  }
+
+  if (departureTime) {
+    filtered = filtered.filter((turn) => {
+      return formatTurnTime(turn.departure_time) === departureTime;
     });
   }
 
@@ -1221,6 +1990,78 @@ function getTurnSortKey(turn) {
   return `${turn.departure_date || "9999-12-31"} ${formatTurnTime(turn.departure_time)}`;
 }
 
+async function completeExpiredTurns() {
+  if (!appState.profile?.id || !appState.turns.length) {
+    return;
+  }
+
+  const expiredTurns = appState.turns.filter((turn) => {
+    return isPastDepartureDateTime(turn.departure_date, formatTurnTime(turn.departure_time));
+  });
+
+  if (!expiredTurns.length) {
+    return;
+  }
+
+  let completedOwnTrips = 0;
+
+  for (const turn of expiredTurns) {
+    const isDriver = sameId(turn.driver_id, appState.profile.id);
+    const acceptedApplication = appState.turnApplications.find((application) => {
+      return sameId(application.turn_id, turn.id)
+        && sameId(application.applicant_id, appState.profile.id)
+        && application.status === "accepted";
+    });
+    const isParticipant = isDriver || Boolean(acceptedApplication);
+    const alreadyInHistory = appState.history.some((item) => item.turn_id === turn.id);
+    const wasDeletedFromHistory = appState.locallyDeletedHistoryTurnIds.has(String(turn.id));
+
+    if (isParticipant && !alreadyInHistory && !wasDeletedFromHistory) {
+      try {
+        const [historyItem] = await insertRow("turn_history", {
+          user_id: appState.profile.id,
+          turn_id: turn.id,
+          driver_id: turn.driver_id || null,
+          driver_name: turn.driver_name,
+          origin: turn.origin,
+          destination: turn.destination,
+          university: turn.university,
+          vehicle_plate: turn.vehicle_plate || null,
+          ride_date: turn.departure_date || new Date().toISOString().slice(0, 10),
+          departure_time: turn.departure_time,
+          contribution_clp: turn.contribution_clp,
+          status: "completed"
+        });
+
+        if (historyItem) {
+          appState.history.unshift(historyItem);
+        }
+        completedOwnTrips += 1;
+      } catch (error) {
+        console.warn("Expired turn history insert failed", error);
+      }
+    }
+
+    if (isDriver) {
+      try {
+        await updateRows("university_turns", `id=eq.${encodeURIComponent(turn.id)}&driver_id=eq.${encodeURIComponent(appState.profile.id)}`, {
+          status: "completed"
+        });
+      } catch (error) {
+        console.warn("Expired turn status update failed", error);
+      }
+    }
+  }
+
+  appState.turns = appState.turns.filter((turn) => {
+    return !expiredTurns.some((expiredTurn) => expiredTurn.id === turn.id);
+  });
+
+  if (completedOwnTrips > 0) {
+    showToast(`${completedOwnTrips === 1 ? "Un turno fue completado" : `${completedOwnTrips} turnos fueron completados`} automáticamente.`, "info");
+  }
+}
+
 async function selectRows(table, columns, query = "") {
   const queryString = query ? `&${query}` : "";
   return supabaseFetch(`/rest/v1/${table}?select=${encodeURIComponent(columns)}${queryString}`, {
@@ -1249,6 +2090,15 @@ async function deleteRows(table, filters) {
   });
 }
 
+async function deleteRowsReturning(table, filters) {
+  return supabaseFetch(`/rest/v1/${table}?${filters}`, {
+    method: "DELETE",
+    headers: {
+      Prefer: "return=representation"
+    }
+  });
+}
+
 async function upsertRow(table, row) {
   return supabaseFetch(`/rest/v1/${table}`, {
     method: "POST",
@@ -1267,6 +2117,54 @@ async function updateRows(table, filters, row) {
     },
     body: JSON.stringify(row)
   });
+}
+
+function upsertById(collection, row) {
+  if (!row?.id) {
+    return collection;
+  }
+
+  const index = collection.findIndex((item) => sameId(item.id, row.id));
+
+  if (index === -1) {
+    collection.push(row);
+  } else {
+    collection[index] = {
+      ...collection[index],
+      ...row
+    };
+  }
+
+  return collection;
+}
+
+function removeById(collection, id) {
+  const index = collection.findIndex((item) => String(item.id) === String(id));
+
+  if (index !== -1) {
+    collection.splice(index, 1);
+  }
+
+  return collection;
+}
+
+function sameId(left, right) {
+  return String(left || "") === String(right || "");
+}
+
+function upsertGroupMember(member) {
+  const index = appState.groupMembers.findIndex((item) => {
+    return item.group_id === member.group_id && item.user_id === member.user_id;
+  });
+
+  if (index === -1) {
+    appState.groupMembers.push(member);
+  } else {
+    appState.groupMembers[index] = {
+      ...appState.groupMembers[index],
+      ...member
+    };
+  }
 }
 
 function showApp() {
@@ -1298,7 +2196,7 @@ function renderApp() {
     ["messages", renderMessages],
     ["rating", renderRating],
     ["reports", renderReports],
-    ["history", renderHistoryCalendar],
+    ["my trips", renderMyTrips],
     ["groups", renderGroups],
     ["private turn groups", renderPrivateTurnGroupOptions]
   ].forEach(([name, render]) => {
@@ -1308,6 +2206,11 @@ function renderApp() {
       console.warn(`Render failed: ${name}`, error);
     }
   });
+}
+
+function renderMyTrips() {
+  renderTripManagement();
+  renderHistoryCalendar();
 }
 
 function renderProfile() {
@@ -1325,6 +2228,8 @@ function renderProfile() {
     profileForm.querySelector('input[name="name"]').value = profile.full_name;
     profileForm.querySelector('input[name="university"]').value = profile.university;
     profileForm.querySelector('input[name="commune"]').value = profile.commune;
+    profileForm.querySelector('input[name="rut"]').value = profile.rut ? formatRut(profile.rut) : "";
+    profileForm.querySelector('input[name="phone"]').value = profile.phone || "";
     profileForm.querySelector('input[name="email"]').value = profile.email;
   }
 }
@@ -1362,57 +2267,69 @@ function renderTurns() {
     return;
   }
 
-  const visibleTurns = applyTurnFilters(appState.turns);
+  const visibleTurns = applyTurnFilters(appState.turns).filter((turn) => {
+    return isCompleteTurn(turn) && !hasAcceptedTripParticipation(turn);
+  });
 
   if (!visibleTurns.length) {
+    if (appState.selectedTurnId && appState.turns.some((turn) => sameId(turn.id, appState.selectedTurnId))) {
+      appState.selectedTurnId = null;
+      renderTurnDetail();
+    }
     list.innerHTML = '<p class="empty-state">No hay turnos que coincidan con estos filtros.</p>';
     return;
   }
 
+  if (appState.selectedTurnId && !visibleTurns.some((turn) => sameId(turn.id, appState.selectedTurnId))) {
+    appState.selectedTurnId = null;
+  }
+
   list.innerHTML = visibleTurns.map((turn) => {
     const application = getOwnTurnApplication(turn.id);
-    const canMessage = canMessageTurnDriver(turn);
     const locationScore = getTurnLocationScore(turn, appState.profile?.commune);
-    const locationLabel = locationScore === 0
-      ? "Cerca de ti"
-      : locationScore === 1
-        ? "Zona cercana"
-        : "";
+    const universityScore = getTurnUniversityScore(turn, appState.profile?.university);
+    const locationLabel = universityScore === 0 && locationScore <= 1
+      ? "Match inteligente"
+      : locationScore === 0
+        ? "Cerca de ti"
+        : locationScore === 1
+          ? "Zona cercana"
+          : "";
     const privateGroupName = turn.visibility === "private"
       ? getGroupName(turn.group_id)
       : "";
 
     const driverProfile = turn.driver_id ? appState.driverProfiles[turn.driver_id] : null;
     const driverAvatar = getDriverTurnAvatarHtml(turn.driver_id, turn.driver_name, driverProfile?.avatar_url);
+    const driverRating = getTurnDriverRating(turn);
 
     return `
       <article class="app-turn-card" data-open-turn="${turn.id}">
-        <div class="app-turn-card__avatar">
-          ${driverAvatar}
-        </div>
         <div class="app-turn-card__top">
+          <div class="app-turn-card__avatar">
+            ${driverAvatar}
+          </div>
           <div>
-            <small>${escapeHtml(turn.university)}</small>
+            <small>Ruta</small>
             <h3>${escapeHtml(turn.origin)} → ${escapeHtml(turn.destination)}</h3>
           </div>
-          <span>${turn.seats_available} cupos</span>
+          <div class="app-turn-card__capacity">
+            <span>${turn.seats_available} cupos</span>
+            <small><span aria-hidden="true">★</span> ${driverRating.toFixed(1)} / 5</small>
+          </div>
         </div>
         <div class="app-turn-card__match ${locationLabel ? "" : "is-empty"}" ${locationLabel ? "" : 'aria-hidden="true"'}>${locationLabel}</div>
         ${privateGroupName ? `<div class="app-turn-private">Privado · ${escapeHtml(privateGroupName)}</div>` : ""}
         <div class="app-turn-meta">
+          <div><small>Hora de salida</small><strong>${formatTurnTime(turn.departure_time)}</strong></div>
           <div><small>Fecha</small><strong>${formatTurnDate(turn.departure_date)}</strong></div>
-          <div><small>Hora</small><strong>${formatTurnTime(turn.departure_time)}</strong></div>
-          <div><small>Aporte</small><strong>${money(turn.contribution_clp)}</strong></div>
           <div><small>Conductor</small><strong>${escapeHtml(turn.driver_name)}</strong></div>
-          <div><small>Patente</small><strong>${escapeHtml(turn.vehicle_plate || "Por definir")}</strong></div>
-          <div><small>Rating</small><strong>${Number(turn.driver_rating).toFixed(1)} / 5</strong></div>
         </div>
         <div class="app-turn-card__actions">
           <button class="button button--primary button--full" type="button" data-view-turn="${turn.id}">
             Ver turno
           </button>
           ${application ? `<span class="turn-application-pill ${application.status}">${getApplicationStatusLabel(application.status)}</span>` : ""}
-          ${canMessage ? `<button class="button button--secondary button--full" type="button" data-message-turn="${turn.id}">Enviar mensaje</button>` : ""}
         </div>
       </article>
     `;
@@ -1420,27 +2337,8 @@ function renderTurns() {
 
   list.querySelectorAll("[data-view-turn], [data-open-turn]").forEach((element) => {
     element.addEventListener("click", (event) => {
-      if (event.target.closest("[data-message-turn]")) return;
       const turnId = element.dataset.viewTurn || element.dataset.openTurn;
       selectTurn(turnId);
-    });
-  });
-
-  list.querySelectorAll("[data-message-turn]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const turn = appState.turns.find((item) => item.id === button.dataset.messageTurn);
-
-      if (!turn?.driver_id || turn.driver_id === appState.profile.id) return;
-
-      appState.activeThread = {
-        turnId: turn.id,
-        recipientId: turn.driver_id,
-        recipientName: turn.driver_name
-      };
-
-      setActiveTab("messages");
-      renderMessages();
     });
   });
 
@@ -1462,7 +2360,7 @@ function renderTurnDetail() {
 
   if (!detail) return;
 
-  const turn = appState.turns.find((item) => item.id === appState.selectedTurnId);
+  const turn = appState.turns.find((item) => sameId(item.id, appState.selectedTurnId));
 
   if (!turn) {
     detail.hidden = true;
@@ -1470,7 +2368,7 @@ function renderTurnDetail() {
     return;
   }
 
-  const isDriver = turn.driver_id === appState.profile.id;
+  const isDriver = sameId(turn.driver_id, appState.profile.id);
   const canMessage = canMessageTurnDriver(turn);
   const capacityLabel = `${turn.seats_available} ${turn.seats_available === 1 ? "cupo disponible" : "cupos disponibles"}`;
   const historyMatch = appState.history.find((item) => item.turn_id === turn.id);
@@ -1478,9 +2376,11 @@ function renderTurnDetail() {
   const application = getOwnTurnApplication(turn.id);
   const canApply = !isDriver && !application && Number(turn.seats_available) > 0;
   const applicationAction = getTurnApplicationActionHtml(turn, application, canApply);
+  const cancelAction = getCancelTurnActionHtml(turn, application);
   const driverApplications = isDriver ? getDriverApplicationsHtml(turn.id) : "";
   const driverProfile = turn.driver_id ? appState.driverProfiles[turn.driver_id] : null;
   const driverAvatar = getDriverTurnAvatarHtml(turn.driver_id, turn.driver_name, driverProfile?.avatar_url);
+  const driverRating = getTurnDriverRating(turn);
 
   detail.hidden = false;
   detail.innerHTML = `
@@ -1501,13 +2401,15 @@ function renderTurnDetail() {
           <div><small>Capacidad</small><strong>${capacityLabel}</strong></div>
           <div><small>Fecha</small><strong>${formatTurnDate(turn.departure_date)}</strong></div>
           <div><small>Hora</small><strong>${formatTurnTime(turn.departure_time)}</strong></div>
+          <div><small>Calificación</small><strong>${driverRating.toFixed(1)} / 5</strong></div>
           <div><small>Aporte</small><strong>${money(turn.contribution_clp)}</strong></div>
-          <div><small>Patente</small><strong>${escapeHtml(turn.vehicle_plate || "Por definir")}</strong></div>
+          <div><small>Patente</small><strong>${escapeHtml(turn.vehicle_plate)}</strong></div>
         </div>
         <div class="turn-detail__actions">
           ${applicationAction}
           <button class="button button--primary" type="button" data-detail-message ${canMessage ? "" : "disabled"}>Enviar mensaje</button>
           <button class="button button--secondary" type="button" data-detail-report ${alreadyInHistory ? "" : "disabled"}>Denunciar</button>
+          ${cancelAction}
         </div>
         ${driverApplications}
       </div>
@@ -1530,11 +2432,7 @@ function renderTurnDetail() {
 
   detail.querySelector("[data-detail-message]")?.addEventListener("click", () => {
     if (!canMessage) return;
-    appState.activeThread = {
-      turnId: turn.id,
-      recipientId: turn.driver_id,
-      recipientName: turn.driver_name
-    };
+    setActiveConversation(turn.id, turn.driver_id, turn.driver_name);
     setActiveTab("messages");
     renderMessages();
   });
@@ -1565,22 +2463,46 @@ function renderTurnDetail() {
       );
     });
   });
+
+  detail.querySelector("[data-cancel-turn]")?.addEventListener("click", async (event) => {
+    await handleCancelDriverTurn(event.currentTarget.dataset.cancelTurn, event.currentTarget);
+  });
+
+  detail.querySelector("[data-cancel-application]")?.addEventListener("click", async (event) => {
+    await handleCancelPassengerTurn(event.currentTarget.dataset.cancelApplication, event.currentTarget);
+  });
 }
 
 function getOwnTurnApplication(turnId) {
   return appState.turnApplications.find((application) => {
-    return application.turn_id === turnId && application.applicant_id === appState.profile?.id;
+    return sameId(application.turn_id, turnId) && sameId(application.applicant_id, appState.profile?.id);
   });
 }
 
 function getAcceptedTurnApplications(turnId) {
   return appState.turnApplications.filter((application) => {
-    return application.turn_id === turnId && application.status === "accepted";
+    return sameId(application.turn_id, turnId) && application.status === "accepted";
+  });
+}
+
+function hasAcceptedTripParticipation(turn) {
+  if (!turn?.id || !appState.profile?.id) {
+    return false;
+  }
+
+  if (sameId(turn.driver_id, appState.profile.id)) {
+    return getAcceptedTurnApplications(turn.id).length > 0;
+  }
+
+  return appState.turnApplications.some((application) => {
+    return sameId(application.turn_id, turn.id)
+      && sameId(application.applicant_id, appState.profile.id)
+      && application.status === "accepted";
   });
 }
 
 function canMessageTurnDriver(turn) {
-  if (!turn?.driver_id || turn.driver_id === appState.profile?.id) {
+  if (!turn?.driver_id || sameId(turn.driver_id, appState.profile?.id)) {
     return false;
   }
 
@@ -1598,7 +2520,7 @@ function getApplicationStatusLabel(status) {
 }
 
 function getTurnApplicationActionHtml(turn, application, canApply) {
-  if (turn.driver_id === appState.profile.id) {
+  if (sameId(turn.driver_id, appState.profile.id)) {
     return "";
   }
 
@@ -1613,8 +2535,20 @@ function getTurnApplicationActionHtml(turn, application, canApply) {
   `;
 }
 
+function getCancelTurnActionHtml(turn, application) {
+  if (sameId(turn.driver_id, appState.profile.id)) {
+    return `<button class="button button--secondary" type="button" data-cancel-turn="${turn.id}">Cancelar ida</button>`;
+  }
+
+  if (application && ["pending", "accepted"].includes(application.status)) {
+    return `<button class="button button--secondary" type="button" data-cancel-application="${application.id}">Cancelar ida</button>`;
+  }
+
+  return "";
+}
+
 function getDriverApplicationsHtml(turnId) {
-  const applications = appState.turnApplications.filter((application) => application.turn_id === turnId);
+  const applications = appState.turnApplications.filter((application) => sameId(application.turn_id, turnId));
 
   if (!applications.length) {
     return '<div class="turn-applications"><strong>Solicitudes</strong><p class="empty-state">Aún no hay postulaciones para este turno.</p></div>';
@@ -1641,6 +2575,147 @@ function getDriverApplicationsHtml(turnId) {
   `;
 }
 
+function renderTripManagement() {
+  const container = document.querySelector("[data-trip-management]");
+
+  if (!container) return;
+
+  const ownTurns = appState.turns.filter((turn) => {
+    return sameId(turn.driver_id, appState.profile.id)
+      && !appState.locallyCancelledTurnIds.has(String(turn.id));
+  });
+  const passengerApplications = appState.turnApplications
+    .filter((application) => {
+      return sameId(application.applicant_id, appState.profile.id)
+        && ["pending", "accepted"].includes(application.status)
+        && !appState.locallyCancelledApplicationIds.has(String(application.id))
+        && !appState.locallyCancelledTurnIds.has(String(application.turn_id));
+    })
+    .map((application) => ({
+      application,
+      turn: appState.turns.find((turn) => sameId(turn.id, application.turn_id))
+    }))
+    .filter(({ turn }) => Boolean(turn));
+  const driverRequests = appState.turnApplications
+    .filter((application) => {
+      return sameId(application.driver_id, appState.profile.id)
+        && ["pending", "accepted"].includes(application.status)
+        && !appState.locallyCancelledApplicationIds.has(String(application.id))
+        && !appState.locallyCancelledTurnIds.has(String(application.turn_id));
+    })
+    .map((application) => ({
+      application,
+      turn: appState.turns.find((turn) => sameId(turn.id, application.turn_id))
+    }))
+    .filter(({ turn }) => Boolean(turn));
+
+  const sections = [
+    renderDriverTripsSection(ownTurns, driverRequests),
+    renderPassengerTripsSection(passengerApplications)
+  ].join("");
+
+  container.innerHTML = sections || '<p class="empty-state">Todavía no tienes viajes pendientes.</p>';
+
+  container.querySelectorAll("[data-application-response]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await handleApplicationResponse(
+        button.dataset.applicationId,
+        button.dataset.applicationResponse,
+        button
+      );
+    });
+  });
+
+  container.querySelectorAll("[data-cancel-turn]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await handleCancelDriverTurn(button.dataset.cancelTurn, button);
+    });
+  });
+
+  container.querySelectorAll("[data-cancel-application]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await handleCancelPassengerTurn(button.dataset.cancelApplication, button);
+    });
+  });
+
+  container.querySelectorAll("[data-trip-message]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const turn = appState.turns.find((item) => sameId(item.id, button.dataset.tripTurn));
+      const recipientId = button.dataset.tripMessage;
+      const recipientName = button.dataset.tripRecipient;
+
+      if (!turn || !recipientId) return;
+
+      setActiveConversation(turn.id, recipientId, recipientName);
+      setActiveTab("messages");
+      renderMessages();
+    });
+  });
+}
+
+function renderDriverTripsSection(ownTurns, driverRequests) {
+  if (!ownTurns.length && !driverRequests.length) {
+    return "";
+  }
+
+  return `
+    <section class="trip-management__section">
+      <h4>Como conductor</h4>
+      <div class="trip-management__grid">
+        ${ownTurns.map((turn) => `
+          <article class="trip-card">
+            <span class="turn-application-status accepted">Turno publicado</span>
+            <strong>${escapeHtml(turn.origin)} → ${escapeHtml(turn.destination)}</strong>
+            <small>${formatTurnDate(turn.departure_date)} · ${formatTurnTime(turn.departure_time)} · ${turn.seats_available} cupos disponibles</small>
+            <button class="button button--secondary button--small" type="button" data-cancel-turn="${turn.id}">Cancelar ida</button>
+          </article>
+        `).join("")}
+        ${driverRequests.map(({ application, turn }) => `
+          <article class="trip-card">
+            <span class="turn-application-status ${application.status}">${getApplicationStatusLabel(application.status)}</span>
+            <strong>${escapeHtml(application.applicant_name)}</strong>
+            <small>${escapeHtml(turn.origin)} → ${escapeHtml(turn.destination)} · ${formatTurnDate(turn.departure_date)} · ${formatTurnTime(turn.departure_time)}</small>
+            ${application.status === "pending" ? `
+              <div class="trip-card__actions">
+                <button class="button button--primary button--small" type="button" data-application-id="${application.id}" data-application-response="accepted">Aceptar</button>
+                <button class="button button--secondary button--small" type="button" data-application-id="${application.id}" data-application-response="rejected">No aceptar</button>
+              </div>
+            ` : ""}
+            ${application.status === "accepted" ? `
+              <button class="button button--secondary button--small" type="button" data-trip-turn="${turn.id}" data-trip-message="${application.applicant_id}" data-trip-recipient="${escapeHtml(application.applicant_name)}">Mensaje</button>
+            ` : ""}
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderPassengerTripsSection(passengerApplications) {
+  if (!passengerApplications.length) {
+    return "";
+  }
+
+  return `
+    <section class="trip-management__section">
+      <h4>Como pasajero</h4>
+      <div class="trip-management__grid">
+        ${passengerApplications.map(({ application, turn }) => `
+          <article class="trip-card">
+            <span class="turn-application-status ${application.status}">${getApplicationStatusLabel(application.status)}</span>
+            <strong>${escapeHtml(turn.origin)} → ${escapeHtml(turn.destination)}</strong>
+            <small>${formatTurnDate(turn.departure_date)} · ${formatTurnTime(turn.departure_time)} · Conductor ${escapeHtml(turn.driver_name)}</small>
+            <div class="trip-card__actions">
+              ${application.status === "accepted" ? `<button class="button button--primary button--small" type="button" data-trip-turn="${turn.id}" data-trip-message="${turn.driver_id}" data-trip-recipient="${escapeHtml(turn.driver_name)}">Mensaje</button>` : ""}
+              ${["pending", "accepted"].includes(application.status) ? `<button class="button button--secondary button--small" type="button" data-cancel-application="${application.id}">Cancelar ida</button>` : ""}
+            </div>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function getDriverTurnAvatarHtml(driverId, driverName, avatarUrl) {
   if (avatarUrl) {
     return `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(driverName)}" />`;
@@ -1649,40 +2724,89 @@ function getDriverTurnAvatarHtml(driverId, driverName, avatarUrl) {
   return `<span>${escapeHtml(getInitials(driverName || "UBook"))}</span>`;
 }
 
+function getTurnDriverRating(turn) {
+  if (sameId(turn.driver_id, appState.profile?.id)) {
+    return Number(appState.profile.rating || 0);
+  }
+
+  const profileRating = appState.driverProfiles[turn.driver_id]?.rating;
+  return Number(profileRating ?? turn.driver_rating ?? 0);
+}
+
 function renderThreads() {
   const list = document.querySelector("[data-threads-list]");
 
   if (!list) return;
 
-  const passengerThreads = appState.turns.filter((turn) => {
-    return canMessageTurnDriver(turn);
+  const threadMap = new Map();
+
+  appState.turns.filter((turn) => canMessageTurnDriver(turn)).forEach((turn) => {
+    threadMap.set(turn.driver_id, {
+      turnId: turn.id,
+      recipientId: turn.driver_id,
+      recipientName: turn.driver_name,
+      avatarHtml: getConversationAvatarHtml(turn.driver_id, turn.driver_name),
+      label: `${turn.origin} → ${turn.destination}`
+    });
   });
-  const driverThreads = appState.turns.flatMap((turn) => {
-    if (turn.driver_id !== appState.profile.id) {
-      return [];
+
+  appState.turns.forEach((turn) => {
+    if (!sameId(turn.driver_id, appState.profile.id)) {
+      return;
     }
 
-    return getAcceptedTurnApplications(turn.id).map((application) => ({
-      turn,
-      application
-    }));
+    getAcceptedTurnApplications(turn.id).forEach((application) => {
+      threadMap.set(application.applicant_id, {
+        turnId: turn.id,
+        recipientId: application.applicant_id,
+        recipientName: application.applicant_name,
+        avatarHtml: getConversationAvatarHtml(application.applicant_id, application.applicant_name),
+        label: `${turn.origin} → ${turn.destination}`
+      });
+    });
   });
+
+  appState.messages.forEach((message) => {
+    if (![message.sender_id, message.recipient_id].includes(appState.profile.id)) {
+      return;
+    }
+
+    const recipientId = message.sender_id === appState.profile.id
+      ? message.recipient_id
+      : message.sender_id;
+
+    if (!recipientId || threadMap.has(recipientId)) {
+      return;
+    }
+
+    const turn = appState.turns.find((item) => sameId(item.id, message.turn_id));
+    threadMap.set(recipientId, {
+      turnId: message.turn_id || "",
+      recipientId,
+      recipientName: getConversationRecipientName(recipientId),
+      avatarHtml: getConversationAvatarHtml(recipientId, getConversationRecipientName(recipientId)),
+      label: turn ? `${turn.origin} → ${turn.destination}` : "Conversación anterior"
+    });
+  });
+
+  const userThreads = [...threadMap.values()];
 
   list.innerHTML = `
     <button class="thread-item is-system" type="button" data-thread-system="welcome">
-      <strong>UBook</strong>
-      <span>Bienvenida y recomendaciones de seguridad</span>
+      <div class="thread-item__avatar"><span>UB</span></div>
+      <div class="thread-item__content">
+        <strong>UBook</strong>
+        <span>Bienvenida y recomendaciones de seguridad</span>
+      </div>
     </button>
     <div class="groups-list" data-groups-list></div>
-  ` + passengerThreads.map((turn) => `
-    <button class="thread-item" type="button" data-thread-turn="${turn.id}">
-      <strong>${escapeHtml(turn.driver_name)}</strong>
-      <span>${escapeHtml(turn.origin)} → ${escapeHtml(turn.destination)}</span>
-    </button>
-  `).join("") + driverThreads.map(({ turn, application }) => `
-    <button class="thread-item" type="button" data-thread-application="${application.id}">
-      <strong>${escapeHtml(application.applicant_name)}</strong>
-      <span>${escapeHtml(turn.origin)} → ${escapeHtml(turn.destination)}</span>
+  ` + userThreads.map((thread) => `
+    <button class="thread-item" type="button" data-thread-user="${thread.recipientId}" data-thread-turn="${thread.turnId}" data-thread-name="${escapeHtml(thread.recipientName)}">
+      <div class="thread-item__avatar">${thread.avatarHtml}</div>
+      <div class="thread-item__content">
+        <strong>${escapeHtml(thread.recipientName)}</strong>
+        <span>${escapeHtml(thread.label)}</span>
+      </div>
     </button>
   `).join("");
 
@@ -1694,38 +2818,53 @@ function renderThreads() {
     renderMessages();
   });
 
-  list.querySelectorAll("[data-thread-turn]").forEach((button) => {
+  list.querySelectorAll("[data-thread-user]").forEach((button) => {
     button.addEventListener("click", () => {
-      const turn = appState.turns.find((item) => item.id === button.dataset.threadTurn);
-
-      appState.activeThread = {
-        turnId: turn.id,
-        recipientId: turn.driver_id,
-        recipientName: turn.driver_name
-      };
-
+      setActiveConversation(button.dataset.threadTurn, button.dataset.threadUser, button.dataset.threadName);
       renderMessages();
     });
   });
+}
 
-  list.querySelectorAll("[data-thread-application]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const application = appState.turnApplications.find((item) => item.id === button.dataset.threadApplication);
-      const turn = appState.turns.find((item) => item.id === application?.turn_id);
+function setActiveConversation(turnId, recipientId, recipientName) {
+  appState.activeThread = {
+    turnId,
+    recipientId,
+    recipientName
+  };
+  refreshRealtimeSubscriptionsIfNeeded();
+}
 
-      if (!application || !turn || turn.driver_id !== appState.profile.id || application.status !== "accepted") {
-        return;
-      }
+function getConversationRecipientName(recipientId) {
+  const driverTurn = appState.turns.find((turn) => turn.driver_id === recipientId);
 
-      appState.activeThread = {
-        turnId: turn.id,
-        recipientId: application.applicant_id,
-        recipientName: application.applicant_name
-      };
+  if (driverTurn?.driver_name) {
+    return driverTurn.driver_name;
+  }
 
-      renderMessages();
-    });
+  const application = appState.turnApplications.find((item) => {
+    return item.applicant_id === recipientId || item.driver_id === recipientId;
   });
+
+  if (application?.applicant_id === recipientId && application.applicant_name) {
+    return application.applicant_name;
+  }
+
+  if (appState.driverProfiles[recipientId]?.full_name) {
+    return appState.driverProfiles[recipientId].full_name;
+  }
+
+  return "Usuario";
+}
+
+function getConversationAvatarHtml(recipientId, fallbackName) {
+  const profile = appState.driverProfiles[recipientId];
+
+  if (profile?.avatar_url) {
+    return `<img src="${escapeHtml(profile.avatar_url)}" alt="${escapeHtml(profile.full_name || fallbackName || "Usuario")}" />`;
+  }
+
+  return `<span>${escapeHtml(getInitials(profile?.full_name || fallbackName || "Usuario"))}</span>`;
 }
 
 function renderGroups() {
@@ -1774,10 +2913,11 @@ function getGroupName(groupId) {
 
 function renderMessages() {
   const header = document.querySelector("[data-chat-header]");
+  const deleteButton = document.querySelector("[data-delete-chat]");
   const list = document.querySelector("[data-chat-messages]");
   const form = document.querySelector('[data-form="message"]');
 
-  if (!header || !list || !form) return;
+  if (!header || !deleteButton || !list || !form) return;
 
   if (!appState.activeThread) {
     appState.activeThread = {
@@ -1788,6 +2928,8 @@ function renderMessages() {
 
   if (appState.activeThread.system === "welcome") {
     header.textContent = "Bienvenida de UBook";
+    deleteButton.hidden = true;
+    deleteButton.disabled = true;
     list.innerHTML = `
       <article class="chat-message system-message">
         <p>Bienvenido a UBook. Antes de coordinar un turno, revisa el perfil del conductor, acuerda el punto exacto de encuentro dentro del chat y reporta cualquier conducta sospechosa desde Denuncias.</p>
@@ -1800,16 +2942,17 @@ function renderMessages() {
   }
 
   header.textContent = `Chat con ${appState.activeThread.recipientName}`;
+  deleteButton.hidden = false;
+  deleteButton.disabled = false;
   form.querySelector("input").disabled = false;
   form.querySelector("button").disabled = false;
 
   const messages = appState.messages.filter((message) => {
-    const sameTurn = message.turn_id === appState.activeThread.turnId;
     const betweenUsers =
       [message.sender_id, message.recipient_id].includes(appState.profile.id) &&
       [message.sender_id, message.recipient_id].includes(appState.activeThread.recipientId);
 
-    return sameTurn && betweenUsers;
+    return betweenUsers;
   });
 
   if (!messages.length) {
@@ -1828,6 +2971,88 @@ function renderMessages() {
   }).join("");
 
   list.scrollTop = list.scrollHeight;
+}
+
+async function handleDeleteActiveConversation(button) {
+  const thread = appState.activeThread;
+
+  if (!thread || thread.system || !thread.recipientId) {
+    showToast("Selecciona una conversación para borrar.", "error");
+    return;
+  }
+
+  if (!window.confirm("Se borrarán todos los mensajes de esta conversación para ambos usuarios.")) {
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+  }
+
+  const currentUserId = appState.profile.id;
+  const recipientId = thread.recipientId;
+  const conversationMessages = getConversationMessages(recipientId);
+
+  try {
+    if (conversationMessages.length) {
+      await deleteConversationMessages(conversationMessages, currentUserId, recipientId);
+    }
+
+    appState.messages = appState.messages.filter((message) => {
+      const betweenUsers =
+        [message.sender_id, message.recipient_id].includes(currentUserId) &&
+        [message.sender_id, message.recipient_id].includes(recipientId);
+
+      return !betweenUsers;
+    });
+    appState.activeThread = {
+      system: "welcome",
+      recipientName: "UBook"
+    };
+    refreshRealtimeSubscriptionsIfNeeded();
+    renderMessages();
+    showToast("Conversación borrada.", "success");
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+    }
+    showToast(error.message, "error");
+  }
+}
+
+function getConversationMessages(recipientId) {
+  return appState.messages.filter((message) => {
+    return [message.sender_id, message.recipient_id].includes(appState.profile.id)
+      && [message.sender_id, message.recipient_id].includes(recipientId);
+  });
+}
+
+async function deleteConversationMessages(messages, currentUserId, recipientId) {
+  const ids = messages.map((message) => message.id).filter(Boolean);
+
+  if (ids.length) {
+    try {
+      await deleteRows("turn_messages", `id=in.(${ids.map(encodeURIComponent).join(",")})`);
+      return;
+    } catch (error) {
+      console.warn("Conversation delete by ids failed", error);
+    }
+  }
+
+  const results = await Promise.allSettled([
+    deleteRows(
+      "turn_messages",
+      `sender_id=eq.${encodeURIComponent(currentUserId)}&recipient_id=eq.${encodeURIComponent(recipientId)}`
+    ),
+    deleteRows(
+      "turn_messages",
+      `sender_id=eq.${encodeURIComponent(recipientId)}&recipient_id=eq.${encodeURIComponent(currentUserId)}`
+    )
+  ]);
+
+  if (results.every((result) => result.status === "rejected")) {
+    throw results[0].reason;
+  }
 }
 
 function renderRating() {
@@ -1878,7 +3103,7 @@ function renderHistoryCalendar() {
   renderHistorySpendSummary();
 
   const ownTurns = appState.turns
-    .filter((turn) => turn.driver_id === appState.profile.id)
+    .filter((turn) => sameId(turn.driver_id, appState.profile.id))
     .map((turn) => ({
       id: `turn-${turn.id}`,
       type: "Publicado",
@@ -1890,19 +3115,24 @@ function renderHistoryCalendar() {
       contribution: turn.contribution_clp,
       vehiclePlate: turn.vehicle_plate
     }));
-  const historyTurns = appState.history.map((turn) => ({
-    id: `history-${turn.id}`,
-    historyId: turn.id,
-    type: "Realizado",
-    origin: turn.origin,
-    destination: turn.destination,
-    date: turn.ride_date,
-    time: turn.departure_time,
-    driverName: turn.driver_name,
-    driverId: turn.driver_id,
-    contribution: turn.contribution_clp,
-    vehiclePlate: turn.vehicle_plate
-  }));
+  const historyTurns = appState.history
+    .filter((turn) => {
+      return !appState.locallyDeletedHistoryIds.has(String(turn.id))
+        && !appState.locallyDeletedHistoryTurnIds.has(String(turn.turn_id));
+    })
+    .map((turn) => ({
+      id: `history-${turn.id}`,
+      historyId: turn.id,
+      type: "Realizado",
+      origin: turn.origin,
+      destination: turn.destination,
+      date: turn.ride_date,
+      time: turn.departure_time,
+      driverName: turn.driver_name,
+      driverId: turn.driver_id,
+      contribution: turn.contribution_clp,
+      vehiclePlate: turn.vehicle_plate
+    }));
   const items = [...ownTurns, ...historyTurns].sort((a, b) => {
     return `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`);
   });
@@ -2073,6 +3303,9 @@ function initAppTabs() {
 }
 
 function setActiveTab(tabName) {
+  const previousTab = appState.activeTab;
+  appState.activeTab = tabName;
+
   document.querySelectorAll("[data-app-tab]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.appTab === tabName);
   });
@@ -2080,6 +3313,13 @@ function setActiveTab(tabName) {
   document.querySelectorAll("[data-panel]").forEach((panel) => {
     panel.classList.toggle("is-active", panel.dataset.panel === tabName);
   });
+
+  if (previousTab === "messages" && tabName !== "messages") {
+    appState.activeThread = null;
+    renderMessages();
+  }
+
+  refreshRealtimeSubscriptionsIfNeeded();
 }
 
 function initAppForms() {
@@ -2094,12 +3334,15 @@ function initAppForms() {
   const turnFiltersPanel = document.querySelector("[data-turn-filters]");
   const turnFilterSector = document.querySelector("#turn-filter-sector");
   const turnFilterDay = document.querySelector("#turn-filter-day");
+  const turnFilterTime = document.querySelector("#turn-filter-time");
   const turnFilterSort = document.querySelector("#turn-filter-sort");
   const turnFiltersReset = document.querySelector("[data-turn-filters-reset]");
   const groupToggle = document.querySelector("[data-group-toggle]");
   const privateTurnToggle = document.querySelector("[data-private-turn-toggle]");
   const vehiclePlateInput = turnForm?.querySelector('input[name="vehicle_plate"]');
   const privateVehiclePlateInput = privateTurnForm?.querySelector('input[name="vehicle_plate"]');
+  const turnTimeInput = turnForm?.querySelector('input[name="time"]');
+  const privateTurnTimeInput = privateTurnForm?.querySelector('input[name="time"]');
 
   turnToggle?.addEventListener("click", () => {
     if (!turnForm) {
@@ -2129,6 +3372,16 @@ function initAppForms() {
     appState.turnFilters.day = turnFilterDay.value;
     renderTurns();
   });
+  turnFilterTime?.addEventListener("input", () => {
+    appState.turnFilters.departureTime = normalizeTimeFilterValue(turnFilterTime.value);
+    renderTurns();
+  });
+  turnFilterTime?.addEventListener("change", () => {
+    const normalizedTime = normalizeTimeFilterValue(turnFilterTime.value);
+    turnFilterTime.value = normalizedTime || turnFilterTime.value;
+    appState.turnFilters.departureTime = normalizedTime;
+    renderTurns();
+  });
   turnFilterSort?.addEventListener("change", () => {
     appState.turnFilters.sort = turnFilterSort.value;
     renderTurns();
@@ -2137,11 +3390,13 @@ function initAppForms() {
     appState.turnFilters = {
       sector: "",
       day: "",
+      departureTime: "",
       sort: "default"
     };
 
     if (turnFilterSector) turnFilterSector.value = "";
     if (turnFilterDay) turnFilterDay.value = "";
+    if (turnFilterTime) turnFilterTime.value = "";
     if (turnFilterSort) turnFilterSort.value = "default";
     renderTurns();
   });
@@ -2175,9 +3430,20 @@ function initAppForms() {
   privateVehiclePlateInput?.addEventListener("input", () => {
     privateVehiclePlateInput.value = normalizeVehiclePlate(privateVehiclePlateInput.value);
   });
+  [turnTimeInput, privateTurnTimeInput].filter(Boolean).forEach((input) => {
+    input.addEventListener("blur", () => {
+      const normalizedTime = normalizeTurnTime(input.value);
+      if (normalizedTime) {
+        input.value = normalizedTime;
+      }
+    });
+  });
   turnForm?.addEventListener("submit", handleCreateTurn);
   profileForm?.addEventListener("submit", handleProfileUpdate);
   messageForm?.addEventListener("submit", handleSendMessage);
+  document.querySelector("[data-delete-chat]")?.addEventListener("click", (event) => {
+    handleDeleteActiveConversation(event.currentTarget);
+  });
   reportForm?.addEventListener("submit", handleCreateReport);
   groupForm?.addEventListener("submit", handleCreateGroup);
   privateTurnForm?.addEventListener("submit", handleCreatePrivateTurn);
@@ -2261,8 +3527,33 @@ async function createTurnFromForm(form, { visibility, groupId = null, successMes
     return;
   }
 
-  if (!origin || !destination || !departureTimeInput || !departureDate || !seats) {
-    showToast("Completa los datos del turno.", "error");
+  if (!origin) {
+    showToast("El origen del turno es obligatorio.", "error");
+    return;
+  }
+
+  if (!destination) {
+    showToast("El destino del turno es obligatorio.", "error");
+    return;
+  }
+
+  if (!departureDate) {
+    showToast("La fecha del turno es obligatoria.", "error");
+    return;
+  }
+
+  if (!departureTimeInput) {
+    showToast("La hora de salida es obligatoria.", "error");
+    return;
+  }
+
+  if (!Number.isInteger(seats) || seats < 1 || seats > 8) {
+    showToast("Ingresa una cantidad de cupos válida entre 1 y 8.", "error");
+    return;
+  }
+
+  if (!Number.isFinite(contribution) || contribution < 0 || contribution > 100000) {
+    showToast("Ingresa un aporte válido entre $0 y $100.000.", "error");
     return;
   }
 
@@ -2292,41 +3583,54 @@ async function createTurnFromForm(form, { visibility, groupId = null, successMes
     return;
   }
 
-  setFormLoading(form, true);
+  setFormLoading(form, true, visibility === "private" ? "Publicando privado..." : "Publicando turno...");
+  form.classList.add("is-publishing");
 
   try {
-    await insertRow("university_turns", {
-      driver_id: appState.profile.id,
-      driver_name: appState.profile.full_name,
-      driver_rating: Number(appState.profile.rating || 0),
-      origin,
-      destination,
-      university: appState.profile.university,
-      vehicle_plate: vehiclePlate,
-      departure_date: departureDate,
-      departure_time: departureTime,
-      seats_available: seats,
-      contribution_clp: contribution,
-      visibility,
-      group_id: groupId,
-      status: "active"
-    });
+    const [insertedTurns] = await Promise.all([
+      insertRow("university_turns", {
+        driver_id: appState.profile.id,
+        driver_name: appState.profile.full_name,
+        driver_rating: Number(appState.profile.rating || 0),
+        origin,
+        destination,
+        university: appState.profile.university,
+        vehicle_plate: vehiclePlate,
+        departure_date: departureDate,
+        departure_time: departureTime,
+        seats_available: seats,
+        contribution_clp: contribution,
+        visibility,
+        group_id: groupId,
+        status: "active"
+      }),
+      wait(1800)
+    ]);
+    const [insertedTurn] = insertedTurns || [];
 
     form.reset();
     form.date.value = getTodayDateValue();
     form.seats.value = 3;
     form.contribution.value = 3000;
-    await loadAppData();
+
+    if (insertedTurn) {
+      upsertById(appState.turns, insertedTurn);
+      appState.turns = sortTurnsForProfile(appState.turns);
+      renderApp();
+      refreshRealtimeSubscriptionsIfNeeded();
+    }
+
     showToast(successMessage, "success");
   } catch (error) {
     showToast(error.message, "error");
   } finally {
+    form.classList.remove("is-publishing");
     setFormLoading(form, false);
   }
 }
 
 async function handleApplyToTurn(turn) {
-  if (!turn?.id || turn.driver_id === appState.profile.id) {
+  if (!turn?.id || sameId(turn.driver_id, appState.profile.id)) {
     return;
   }
 
@@ -2336,10 +3640,17 @@ async function handleApplyToTurn(turn) {
   }
 
   try {
-    await insertRow("turn_applications", {
+    const [application] = await insertRow("turn_applications", {
       turn_id: turn.id
     });
-    await loadAppData();
+
+    if (application) {
+      upsertById(appState.turnApplications, application);
+      renderTurns();
+      renderTurnDetail();
+      renderMyTrips();
+    }
+
     showToast("Postulación enviada. El emisor del turno debe aceptarte.", "success");
   } catch (error) {
     if (error.status === 409 || /duplicate|unique/i.test(error.message)) {
@@ -2361,8 +3672,21 @@ async function handleApplicationResponse(applicationId, responseStatus, button) 
 
   try {
     await respondTurnApplication(applicationId, responseStatus);
-    await loadAppData();
-    showToast(responseStatus === "accepted" ? "Solicitud aceptada. El cupo fue descontado." : "Solicitud rechazada.", "success");
+    const application = appState.turnApplications.find((item) => sameId(item.id, applicationId));
+
+    if (application) {
+      application.status = responseStatus;
+      if (responseStatus === "accepted") {
+        appState.turns = appState.turns.map((turn) => {
+          return sameId(turn.id, application.turn_id)
+            ? { ...turn, seats_available: Math.max(0, Number(turn.seats_available || 0) - 1) }
+            : turn;
+        });
+      }
+      renderApp();
+    }
+
+    showToast(responseStatus === "accepted" ? "Su turno ha sido aceptado. El cupo fue descontado." : "Su turno ha sido rechazado.", "success");
   } catch (error) {
     if (button) {
       button.disabled = false;
@@ -2371,7 +3695,179 @@ async function handleApplicationResponse(applicationId, responseStatus, button) 
   }
 }
 
+async function handleCancelDriverTurn(turnId, button) {
+  const turn = appState.turns.find((item) => sameId(item.id, turnId));
+
+  if (!turn || !sameId(turn.driver_id, appState.profile.id)) {
+    showToast("No puedes cancelar este turno.", "error");
+    return;
+  }
+
+  if (!window.confirm("Se eliminará este turno para todos los pasajeros.")) {
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+  }
+
+  try {
+    await cancelDriverTurnRecord(turn);
+    appState.locallyCancelledTurnIds.add(String(turn.id));
+    savePersistedCancelledTrips();
+    appState.turns = appState.turns.filter((item) => !sameId(item.id, turn.id));
+    appState.turnApplications = appState.turnApplications.filter((application) => !sameId(application.turn_id, turn.id));
+
+    if (sameId(appState.selectedTurnId, turn.id)) {
+      appState.selectedTurnId = null;
+    }
+
+    renderApp();
+    showToast("Ida cancelada. El turno fue eliminado.", "success");
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+    }
+    showToast(error.message, "error");
+  }
+}
+
+async function cancelDriverTurnRecord(turn) {
+  const turnFilter = `id=eq.${encodeURIComponent(turn.id)}`;
+  const applicationFilter = `turn_id=eq.${encodeURIComponent(turn.id)}`;
+  const errors = [];
+
+  try {
+    await cancelDriverTurnRpc(turn.id);
+    console.info("Driver cancellation RPC succeeded", {
+      turnId: turn.id
+    });
+    return;
+  } catch (error) {
+    errors.push(error);
+    console.warn("Driver cancellation RPC failed; falling back to REST", error);
+  }
+
+  await updateRows("turn_applications", applicationFilter, {
+    status: "rejected"
+  }).catch((error) => {
+    errors.push(error);
+    console.warn("Driver cancellation application rejection failed", error);
+  });
+
+  await deleteRows("turn_applications", applicationFilter).catch((error) => {
+    errors.push(error);
+    console.warn("Driver cancellation application delete failed", error);
+  });
+
+  for (const status of ["cancelled", "completed"]) {
+    try {
+      const updatedTurns = await updateRows("university_turns", turnFilter, { status });
+
+      if (!Array.isArray(updatedTurns) || updatedTurns.length > 0) {
+        console.info("Driver cancellation turn status updated", {
+          turnId: turn.id,
+          status
+        });
+        return;
+      }
+
+      errors.push(new Error(`0 rows updated with status ${status}`));
+    } catch (error) {
+      errors.push(error);
+      console.warn(`Driver cancellation status ${status} failed`, error);
+    }
+  }
+
+  try {
+    const deletedTurns = await deleteRowsReturning("university_turns", turnFilter);
+
+    if (!Array.isArray(deletedTurns) || deletedTurns.length > 0) {
+      console.info("Driver cancellation turn deleted", {
+        turnId: turn.id
+      });
+      return;
+    }
+
+    errors.push(new Error("0 rows deleted"));
+  } catch (error) {
+    errors.push(error);
+    console.warn("Driver cancellation turn delete failed", error);
+  }
+
+  const lastError = errors[errors.length - 1];
+  throw new Error(lastError?.message || "No pudimos cancelar este turno. Verifica las políticas de permisos.");
+}
+
+async function handleCancelPassengerTurn(applicationId, button) {
+  const application = appState.turnApplications.find((item) => sameId(item.id, applicationId));
+  const turn = appState.turns.find((item) => sameId(item.id, application?.turn_id));
+
+  if (!application || !sameId(application.applicant_id, appState.profile.id) || !turn) {
+    showToast("No encontramos esta ida para cancelarla.", "error");
+    return;
+  }
+
+  if (!window.confirm("Se cancelará tu ida en este turno.")) {
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+  }
+
+  try {
+    await cancelPassengerApplicationRecord(application);
+    appState.locallyCancelledApplicationIds.add(String(application.id));
+    savePersistedCancelledTrips();
+
+    if (application.status === "accepted") {
+      await updateRows("university_turns", `id=eq.${encodeURIComponent(turn.id)}`, {
+        seats_available: Number(turn.seats_available || 0) + 1
+      }).catch((error) => {
+        console.warn("Passenger cancellation seat release failed", error);
+      });
+    }
+
+    appState.turnApplications = appState.turnApplications.filter((item) => item.id !== application.id);
+    if (application.status === "accepted") {
+      appState.turns = appState.turns.map((item) => {
+        return sameId(item.id, turn.id)
+          ? { ...item, seats_available: Number(item.seats_available || 0) + 1 }
+          : item;
+      });
+    }
+
+    renderApp();
+    showToast(application.status === "accepted" ? "Ida cancelada. Se liberó el cupo del turno." : "Ida cancelada.", "success");
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+    }
+    showToast(error.message, "error");
+  }
+}
+
+async function cancelPassengerApplicationRecord(application) {
+  try {
+    await deleteRows("turn_applications", `id=eq.${encodeURIComponent(application.id)}&applicant_id=eq.${encodeURIComponent(appState.profile.id)}`);
+  } catch (deleteError) {
+    try {
+      await updateRows("turn_applications", `id=eq.${encodeURIComponent(application.id)}&applicant_id=eq.${encodeURIComponent(appState.profile.id)}`, {
+        status: "rejected"
+      });
+    } catch {
+      throw deleteError;
+    }
+  }
+}
+
 async function addTurnToHistory(turn) {
+  if (appState.locallyDeletedHistoryTurnIds.has(String(turn.id))) {
+    showToast("Este turno fue eliminado de tu historial.", "error");
+    return;
+  }
+
   try {
     const [historyItem] = await insertRow("turn_history", {
       user_id: appState.profile.id,
@@ -2404,14 +3900,14 @@ async function handleRateHistoryTurn(historyId, rating, button) {
     return;
   }
 
-  const history = appState.history.find((item) => item.id === historyId);
+  const history = appState.history.find((item) => sameId(item.id, historyId));
 
   if (!history) {
     showToast("No se encontró este turno en tu historial.", "error");
     return;
   }
 
-  if (!history.driver_id || history.driver_id === appState.profile.id) {
+  if (!history.driver_id || sameId(history.driver_id, appState.profile.id)) {
     showToast("Este turno no se puede puntuar.", "error");
     return;
   }
@@ -2423,7 +3919,14 @@ async function handleRateHistoryTurn(historyId, rating, button) {
 
   try {
     await submitTurnRating(historyId, rating);
-    await loadAppData();
+    upsertById(appState.ratings, {
+      id: `optimistic-${historyId}`,
+      history_id: historyId,
+      rating,
+      updated_at: new Date().toISOString()
+    });
+    renderRating();
+    renderHistoryCalendar();
     showToast("Puntuación guardada.", "success");
   } catch (error) {
     ratingButtons.forEach((item) => {
@@ -2448,9 +3951,24 @@ async function handleDeleteHistoryTurn(historyId, button) {
   }
 
   try {
-    await deleteRows("turn_history", `id=eq.${encodeURIComponent(historyId)}`);
-    await loadAppData();
+    const historyItem = appState.history.find((item) => String(item.id) === String(historyId));
+    appState.locallyDeletedHistoryIds.add(String(historyId));
+    if (historyItem?.turn_id) {
+      appState.locallyDeletedHistoryTurnIds.add(String(historyItem.turn_id));
+    }
+    savePersistedCancelledTrips();
+    appState.history = appState.history.filter((item) => String(item.id) !== String(historyId));
+    appState.ratings = appState.ratings.filter((rating) => String(rating.history_id) !== String(historyId));
     renderHistoryCalendar();
+    renderReportTurnOptions();
+    await updateRows("turn_history", `id=eq.${encodeURIComponent(historyId)}`, {
+      status: "deleted"
+    }).catch((error) => {
+      console.warn("Remote history status update failed", error);
+    });
+    await deleteRows("turn_history", `id=eq.${encodeURIComponent(historyId)}`).catch((error) => {
+      console.warn("Remote history delete failed", error);
+    });
     showToast("Turno eliminado del historial.", "success");
   } catch (error) {
     if (button) {
@@ -2468,7 +3986,7 @@ async function handleCreateReport(event) {
   const reason = form.reason.value;
   const details = normalizeText(form.details.value);
   const history = selectedTurn.type === "history"
-    ? appState.history.find((item) => item.id === selectedTurn.id)
+    ? appState.history.find((item) => sameId(item.id, selectedTurn.id))
     : null;
 
   if (!history) {
@@ -2524,24 +4042,47 @@ async function handleProfileUpdate(event) {
   const fullName = normalizeText(form.name.value);
   const university = normalizeText(form.university.value);
   const commune = normalizeText(form.commune.value);
+  const phone = normalizePhone(form.phone.value);
 
-  if (!fullName || !university || !commune) {
+  if (!fullName || !university || !commune || !phone) {
     showToast("Completa tu perfil.", "error");
+    return;
+  }
+
+  if (!isValidPhone(phone)) {
+    showToast("Ingresa un número de teléfono válido.", "error");
     return;
   }
 
   setFormLoading(form, true);
 
   try {
-    const [updated] = await updateRows("profiles", `id=eq.${encodeURIComponent(appState.profile.id)}`, {
-      full_name: fullName,
-      university,
-      commune
-    });
+    let updatedRows;
+
+    try {
+      updatedRows = await updateRows("profiles", `id=eq.${encodeURIComponent(appState.profile.id)}`, {
+        full_name: fullName,
+        university,
+        commune,
+        phone
+      });
+    } catch (error) {
+      console.warn("Profile phone column unavailable", error);
+      updatedRows = await updateRows("profiles", `id=eq.${encodeURIComponent(appState.profile.id)}`, {
+        full_name: fullName,
+        university,
+        commune
+      });
+    }
+
+    const [updated] = updatedRows;
+
+    form.phone.value = phone;
 
     appState.profile = {
       ...appState.profile,
-      ...updated
+      ...updated,
+      phone
     };
     appState.driverProfiles[appState.profile.id] = appState.profile;
 
@@ -2675,7 +4216,6 @@ async function handleCreateGroup(event) {
   try {
     await createUserGroup(name, emails);
     form.reset();
-    await loadAppData();
     showToast("Grupo creado.", "success");
   } catch (error) {
     showToast(error.message, "error");
@@ -2689,17 +4229,19 @@ async function handleSendMessage(event) {
 
   if (!appState.activeThread) return;
 
-  const activeTurn = appState.turns.find((turn) => turn.id === appState.activeThread.turnId);
-  const isDriverThread = activeTurn?.driver_id === appState.profile.id;
+  const activeTurn = appState.turns.find((turn) => sameId(turn.id, appState.activeThread.turnId));
+  const isDriverThread = sameId(activeTurn?.driver_id, appState.profile.id);
   const isAcceptedApplicantThread = activeTurn?.driver_id === appState.activeThread.recipientId
     && getOwnTurnApplication(activeTurn.id)?.status === "accepted";
   const isAcceptedDriverThread = isDriverThread && appState.turnApplications.some((application) => {
-    return application.turn_id === activeTurn.id
-      && application.applicant_id === appState.activeThread.recipientId
+    return sameId(application.turn_id, activeTurn.id)
+      && sameId(application.applicant_id, appState.activeThread.recipientId)
       && application.status === "accepted";
   });
+  const existingConversationMessages = getConversationMessages(appState.activeThread.recipientId);
+  const canContinueExistingConversation = existingConversationMessages.length > 0;
 
-  if (!activeTurn || (!isAcceptedApplicantThread && !isAcceptedDriverThread)) {
+  if (!canContinueExistingConversation && (!activeTurn || (!isAcceptedApplicantThread && !isAcceptedDriverThread))) {
     showToast("Solo puedes enviar mensajes en turnos aceptados.", "error");
     return;
   }
@@ -2712,8 +4254,9 @@ async function handleSendMessage(event) {
   setFormLoading(form, true);
 
   try {
+    const fallbackTurnId = existingConversationMessages[existingConversationMessages.length - 1]?.turn_id;
     const [message] = await insertRow("turn_messages", {
-      turn_id: appState.activeThread.turnId,
+      turn_id: appState.activeThread.turnId || fallbackTurnId,
       sender_id: appState.profile.id,
       recipient_id: appState.activeThread.recipientId,
       body
@@ -2785,14 +4328,20 @@ async function handleWaitlistSubmit(form) {
   }
 }
 
-function setFormLoading(form, isLoading) {
+function wait(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function setFormLoading(form, isLoading, loadingText = "Enviando...") {
   const submitButton = form.querySelector('button[type="submit"]');
 
   if (!submitButton) return;
 
   submitButton.disabled = isLoading;
   submitButton.dataset.originalText = submitButton.dataset.originalText || submitButton.textContent;
-  submitButton.textContent = isLoading ? "Enviando..." : submitButton.dataset.originalText;
+  submitButton.textContent = isLoading ? loadingText : submitButton.dataset.originalText;
 }
 
 function escapeHtml(value) {
