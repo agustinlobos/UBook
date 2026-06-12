@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 /**
- * Logotipo de umoov. La "u" inicial va en verde de marca; el resto en blanco.
+ * Logotipo de umoov. La "u" inicial va en el verde principal; el resto en blanco.
  */
 export function Brand({ className }: { className?: string }) {
   return (
@@ -11,7 +11,7 @@ export function Brand({ className }: { className?: string }) {
         className,
       )}
     >
-      <span className="text-brand-accent">U</span>
+      <span className="text-primary">U</span>
       <span className="text-foreground">moov</span>
     </span>
   );
