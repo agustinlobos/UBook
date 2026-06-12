@@ -1,4 +1,4 @@
-import { Brand } from "@/components/brand";
+import { Brand } from "@/components/brand";      
 import { Button } from "@/components/ui/button";
 import { SiteHeader } from "@/components/landing/site-header";
 import { WaitlistDialog } from "@/components/landing/waitlist-dialog";
