@@ -12,7 +12,7 @@ export function Brand({ className }: { className?: string }) {
       )}
     >
       <span className="text-primary">U</span>
-      <span className="text-foreground">moov</span>
+      <span className="text-foreground">Moov</span>
     </span>
   );
 }
